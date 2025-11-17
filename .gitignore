@@ -1,0 +1,9 @@
+﻿*.csv
+*.xlsx
+*.json
+*.parquet
+.history/
+__pycache__/
+*.pyc
+venv/
+.streamlit/secrets.toml
