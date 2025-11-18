@@ -5,6 +5,8 @@ import re
 import pandas as pd
 import altair as alt
 from pathlib import Path
+from geo import resolve_ip_batch, plot_country_choropleth
+
 
 API_URL = os.getenv("API_URL", "http://backend:8000")
 
@@ -127,8 +129,8 @@ if page == "dashboard":
     st.header("📊 Dashboard")
     st.markdown("Training data visualization and insights.")
 
+    # <-- CALL the loader here -->
     df, discovered_path = load_training_dataframe()
-
     # -------------------------------
     # Show Data + Charts (without preview/rows display)
     # -------------------------------
@@ -171,11 +173,8 @@ if page == "dashboard":
         # -----------------------------------------------
         # Identify fraud column
         # -----------------------------------------------
-        fraud_col = None
-        for col in ["IsFraud", "fraud", "Fraud", "is_fraud"]:
-            if col in df.columns:
-                fraud_col = col
-                break
+        # detect a fraud-like column (case-insensitive contains 'fraud')
+        fraud_col = next((col for col in df.columns if 'fraud' in col.lower()), None)
 
         # -----------------------------------------------
         # Fraud vs Legit Transactions
@@ -333,49 +332,57 @@ if page == "dashboard":
                 st.bar_chart(country_fraud_df.set_index(country_col)["FraudCount"])
         elif ip_col and fraud_col:
             st.subheader("🌍 Fraud Heatmap by Country (IP Geolocation)")
-            st.info("This feature resolves IP addresses to countries and displays a geographic heatmap. Click the button below to start.")
-            
-            if st.button("Resolve IPs to Countries (external API)", use_container_width=True):
-                # Resolve unique IPs (limited batch to avoid rate limits)
-                unique_ips = df[ip_col].dropna().astype(str).unique().tolist()
-                # Filter out invalid IPs
-                unique_ips = [ip for ip in unique_ips if ip and ip.lower() != 'nan']
-                unique_ips = unique_ips[:200]  # limit to 200
-                
-                if len(unique_ips) == 0:
-                    st.warning("No valid IP addresses found in the dataset.")
-                else:
-                    ip_to_country_map = {}
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    for idx, ip in enumerate(unique_ips):
-                        status_text.text(f"Resolving IP {idx+1}/{len(unique_ips)}: {ip}")
-                        try:
-                            r = requests.get(f"http://ip-api.com/json/{ip}?fields=country", timeout=2).json()
-                            country = r.get("country")
-                            ip_to_country_map[ip] = country if country else "Unknown"
-                        except Exception:
-                            ip_to_country_map[ip] = "Unknown"
-                        
-                        progress_bar.progress((idx + 1) / len(unique_ips))
-                    
-                    status_text.empty()
-                    progress_bar.empty()
-                    
-                    # Map resolved countries back to dataframe
-                    df["_resolved_country"] = df[ip_col].astype(str).map(ip_to_country_map).fillna("Unknown")
-                    
-                    country_fraud_df = (
-                        df[df[fraud_col] == 1]
-                        .groupby("_resolved_country")
-                        .size()
-                        .reset_index(name="FraudCount")
-                    )
-                    
-                    if len(country_fraud_df) > 0:
-                        st.write("Fraud cases by country (from IP geolocation):")
-                        st.bar_chart(country_fraud_df.set_index("_resolved_country")["FraudCount"])
+            st.info("This feature resolves IP addresses to countries and displays a geographic heatmap. Use the buttons below to resolve top fraud IPs or all unique IPs (careful with API limits).")
+
+            left_col, right_col = st.columns([2,1])
+
+            with left_col:
+                if st.button("Resolve top fraud IPs (recommended)", use_container_width=True):
+                    # Resolve only IPs from fraud cases, starting with most frequent
+                    fraud_ips_series = df.loc[df[fraud_col] == 1, ip_col].dropna().astype(str)
+                    freq = fraud_ips_series.value_counts()
+                    top_n = 500  # configurable: smaller = safer for free API
+                    top_ips = freq.head(top_n).index.tolist()
+
+                    if len(top_ips) == 0:
+                        st.warning("No IPs found among fraud cases.")
+                    else:
+                        with st.spinner(f"Resolving up to {len(top_ips)} IPs..."):
+                            ip_to_country = resolve_ip_batch(top_ips, max_per_run=top_n)
+                        df["_resolved_country"] = df[ip_col].astype(str).map(lambda ip: ip_to_country.get(ip))
+                        df["_resolved_country"] = df["_resolved_country"].fillna("Unknown")
+
+                        country_fraud_df = (
+                            df[df[fraud_col] == 1]
+                            .groupby("_resolved_country")
+                            .size()
+                            .reset_index(name="FraudCount")
+                        )
+
+                        st.dataframe(country_fraud_df.sort_values("FraudCount", ascending=False).head(200))
+                        plot_country_choropleth(country_fraud_df, country_col="_resolved_country", count_col="FraudCount")
+
+            with right_col:
+                if st.button("Resolve ALL unique IPs (dangerous)", use_container_width=True):
+                    unique_ips = df[ip_col].dropna().astype(str).unique().tolist()
+                    max_allowed = 2000
+                    if len(unique_ips) > max_allowed:
+                        st.warning(f"Too many unique IPs ({len(unique_ips)}). Use the 'top' option or increase max_per_run with caution.")
+                    else:
+                        with st.spinner(f"Resolving {len(unique_ips)} IPs..."):
+                            ip_to_country = resolve_ip_batch(unique_ips, max_per_run=len(unique_ips))
+                        df["_resolved_country"] = df[ip_col].astype(str).map(lambda ip: ip_to_country.get(ip))
+                        df["_resolved_country"] = df["_resolved_country"].fillna("Unknown")
+
+                        country_fraud_df = (
+                            df[df[fraud_col] == 1]
+                            .groupby("_resolved_country")
+                            .size()
+                            .reset_index(name="FraudCount")
+                        )
+
+                        st.dataframe(country_fraud_df.sort_values("FraudCount", ascending=False).head(200))
+                        plot_country_choropleth(country_fraud_df, country_col="_resolved_country", count_col="FraudCount")
 
     else:
         st.warning("⚠️ No training data found. Please ensure the dataset is available in `data/` or mounted in the container at `/app/data/`.")
@@ -448,7 +455,3 @@ elif page == "fraud":
 else:
     st.session_state["page"] = "dashboard"
     st.rerun()
-
-
-
-

@@ -3,3 +3,5 @@ pandas
 requests
 altair
 vega_datasets
+pycountry
+plotly
