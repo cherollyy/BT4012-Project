@@ -6,6 +6,8 @@ import pandas as pd
 import altair as alt
 from pathlib import Path
 from geo import resolve_ip_batch, plot_country_choropleth
+import seaborn as sns, matplotlib.pyplot as plt
+import plotly.express as px
 
 
 API_URL = os.getenv("API_URL", "http://backend:8000")
@@ -109,7 +111,7 @@ def load_training_dataframe():
         ]
         for base in sample_candidates:
             if base.exists():
-                for f in base.glob("Fraudulent_E-Commerce_Transaction_Data*.csv"):
+                for f in base.glob("Fraudulent_E-Commerce_Transaction_Data_2.csv"):
                     try:
                         df = pd.read_csv(f)
                         discovered_path = str(f)
@@ -135,40 +137,34 @@ if page == "dashboard":
     # Show Data + Charts (without preview/rows display)
     # -------------------------------
     if df is not None:
-        # -----------------------------------------------
-        # Overview Distribution Chart
-        # -----------------------------------------------
-        st.subheader("Overview — Dataset Distribution")
-        
-        # Select a representative numeric column for the overview
-        overview_col = None
-        if "fraud_probability" in df.columns:
-            overview_col = "fraud_probability"
-        else:
-            # try common amount-like names
-            for candidate in ["amount", "transaction_amount", "TransactionAmt", "TransactionAmount"]:
-                if candidate in df.columns:
-                    overview_col = candidate
-                    break
-        
-        if overview_col is None:
-            # fallback to first numeric column
-            num_cols = df.select_dtypes(include=["number"]).columns.tolist()
-            if num_cols:
-                overview_col = num_cols[0]
+        # KPIs
+        total_tx = len(df)
+        total_fraud = int(df[df["Is Fraudulent"] == 1].shape[0])
+        fraud_rate = total_fraud / max(1, total_tx)
+        avg_amount = df["Transaction Amount"].mean()
 
-        if overview_col is not None:
-            hist = (
-                alt.Chart(df)
-                .mark_bar()
-                .encode(
-                    x=alt.X(f"{overview_col}:Q", bin=alt.Bin(maxbins=40)),
-                    y="count()",
-                    tooltip=[f"{overview_col}:Q", "count()"]
-                )
-                .properties(height=400)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total transactions", f"{total_tx:,}")
+        col2.metric("Total frauds", f"{total_fraud:,}", delta=f"{fraud_rate*100:.2f}%")
+        col3.metric("Avg amount", f"${avg_amount:,.2f}")
+
+
+        #Overview of data -- Transaction Amount 
+        st.subheader("Overview — Dataset Distribution")
+        amount = "Transaction Amount"
+        log_scale = st.checkbox("Log scale amount", value=False)
+        chart = (
+            alt.Chart(df)
+            .mark_bar()
+            .encode(
+                x=alt.X(f"{amount}:Q", bin=alt.Bin(maxbins=60), scale=alt.Scale(type='log') if log_scale else alt.Scale()),
+                y="count()",
+                tooltip=[alt.Tooltip(f"{amount}:Q"), "count()"]
             )
-            st.altair_chart(hist, use_container_width=True)
+            .properties(height=350)
+        )
+        st.altair_chart(chart, use_container_width=True)
+
 
         # -----------------------------------------------
         # Identify fraud column
@@ -223,10 +219,10 @@ if page == "dashboard":
         # -----------------------------------------------
         # Fraud Rate by Payment Method
         # -----------------------------------------------
-        if "PaymentMethod" in df.columns and fraud_col:
+        if "Payment Method" in df.columns and fraud_col:
             st.subheader("Fraud Rate by Payment Method")
             pm_df = (
-                df.groupby("PaymentMethod")[fraud_col]
+                df.groupby("Payment Method")[fraud_col]
                 .mean()
                 .reset_index()
             )
@@ -236,64 +232,151 @@ if page == "dashboard":
                 alt.Chart(pm_df)
                 .mark_bar()
                 .encode(
-                    x="PaymentMethod:N",
+                    x="Payment Method:N",
                     y=alt.Y("FraudRate:Q", title="Fraud Rate (%)"),
-                    color="PaymentMethod:N",
-                    tooltip=["PaymentMethod", "FraudRate"]
+                    color="Payment Method:N",
+                    tooltip=["Payment Method", "FraudRate"]
                 )
                 .properties(height=350)
             )
             st.altair_chart(chart3, use_container_width=True)
 
+
+        # -----------------------------------------------
+        # Time series: daily transactions & frauds with rolling average
+        # -----------------------------------------------
+        st.subheader("Daily Transactions & Frauds with Rolling Average")
+        df["Transaction Date"] = pd.to_datetime(df["Transaction Date"])
+        daily = df.set_index("Transaction Date").resample("D").agg({"Transaction ID":"count", "Is Fraudulent":"sum"})
+        daily.columns = ["transactions","frauds"]
+        daily["fraud_rate"] = 100 * daily["frauds"] / daily["transactions"].replace(0,1)
+        daily["transactions_ma7"] = daily["transactions"].rolling(7).mean()
+
+        import plotly.express as px
+        fig = px.line(daily, y=["transactions","transactions_ma7"], labels={"value":"Count","index":"Date"})
+        fig.update_layout(title="Daily transactions (and 7-day MA)")
+        st.plotly_chart(fig, use_container_width=True)
+
+
+        # -----------------------------------------------
+        # Hour-of-day vs Day-of-week heatmap (when frauds spike)
+        # -----------------------------------------------
+        st.subheader("Fraud Heatmap by Hour of Day and Day of Week (dow)")
+        df["Transaction Date"] = pd.to_datetime(df["Transaction Date"])
+        df["hour"] = df["Transaction Date"].dt.hour
+        df["dow"] = df["Transaction Date"].dt.day_name()
+
+        heat = (
+            df[df["Is Fraudulent"] == 1]
+            .groupby(["dow","hour"])
+            .size()
+            .reset_index(name="fraud_count")
+        )
+
+        # pivot so rows=dow in order Mon..Sun
+        order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        heat_piv = heat.pivot(index="dow", columns="hour", values="fraud_count").reindex(order).fillna(0)
+
+        fig, ax = plt.subplots(figsize=(14,3))
+        sns.heatmap(heat_piv, cmap="Reds", ax=ax)
+        ax.set_xlabel("Hour of day")
+        st.pyplot(fig)
+
+
         # -----------------------------------------------
         # Fraud Rate by Device Type
         # -----------------------------------------------
-        if "Device" in df.columns and fraud_col:
+        if "Device Used" in df.columns and fraud_col:
             st.subheader("Fraud Rate by Device Type")
-            ddf = df.groupby("Device")[fraud_col].mean().reset_index()
+            ddf = df.groupby("Device Used")[fraud_col].mean().reset_index()
             ddf["FraudRate"] = ddf[fraud_col] * 100
 
             chart4 = (
                 alt.Chart(ddf)
                 .mark_bar()
                 .encode(
-                    x="Device:N",
+                    x="Device Used:N",
                     y="FraudRate:Q",
-                    color="Device:N",
-                    tooltip=["Device", "FraudRate"]
+                    color="Device Used:N",
+                    tooltip=["Device Used", "FraudRate"]
                 )
                 .properties(height=350)
             )
             st.altair_chart(chart4, use_container_width=True)
 
         # -----------------------------------------------
-        # Browser Distribution Among Fraud Cases
+        # Product Categories Distribution Among Fraud Cases
         # -----------------------------------------------
-        if "Browser" in df.columns and fraud_col:
-            st.subheader("Browser Types in Fraud Cases")
+        st.subheader("Product Categories in Fraud Cases")
+        cat = (df[df["Is Fraudulent"] == 1]
+       .groupby("Product Category")
+       .size()
+       .reset_index(name="fraud_count")
+       .sort_values("fraud_count", ascending=False).head(20))
+        chart = alt.Chart(cat).mark_bar().encode(
+            x="fraud_count:Q",
+            y=alt.Y("Product Category:N", sort='-x'),
+            tooltip=["Product Category","fraud_count"]
+        ).properties(height=600)
+        st.altair_chart(chart, use_container_width=True)
+
+
+        # -----------------------------------------------
+        # Customer Age Distribution Among Fraud Cases
+        # -----------------------------------------------
+        if "Customer Age" in df.columns and fraud_col:
+            st.subheader("Customer Age in Fraud Cases")
             fraud_only = df[df[fraud_col] == 1]
 
             chart5 = (
                 alt.Chart(fraud_only)
                 .mark_bar()
                 .encode(
-                    x="Browser:N",
+                    x="Customer Age:N",
                     y="count()",
-                    color="Browser:N",
+                    color=alt.value("#4C78A8"),
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart5, use_container_width=True)
+            st.altair_chart(chart5, use_container_width=True)    
+
+        # -----------------------------------------------
+        # Outlier scatterplot 
+        # -----------------------------------------------
+        st.subheader("Amount vs Account Age (sample)")
+        # sample safely, drop rows with missing numeric values, make sure column names match exactly
+        sample_n = min(len(df), 2000)
+        df_sample = (
+            df
+            .dropna(subset=["Account Age Days", "Transaction Amount"])      # remove rows missing the axes
+            .sample(n=sample_n, random_state=42)                           # sample reproducibly
+            .reset_index(drop=True)
+        )
+        # ensure fraud column is string/categorical so colors render properly
+        df_sample["Is Fraudulent"] = df_sample["Is Fraudulent"].astype(str)
+        # now pass the sampled DF and the column name (not a full-length series)
+        import plotly.express as px
+        fig = px.scatter(
+            df_sample,
+            x="Account Age Days",
+            y="Transaction Amount",
+            color="Is Fraudulent",               
+            hover_data=["Customer ID", "Transaction ID"],
+            title="Amount vs Account Age (sample)"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
 
         # -----------------------------------------------
         # Singapore CPI Trend (Placeholder)
         # -----------------------------------------------
+        '''
         st.subheader("📈 Singapore CPI Trend (Placeholder)")
         cpi_placeholder = pd.DataFrame({
             "Month": pd.date_range("2023-01-01", periods=6, freq="M"),
             "CPI": [101, 102, 102.5, 103, 103.7, 104]
         }).set_index("Month")
-        st.line_chart(cpi_placeholder)
+        st.line_chart(cpi_placeholder)'''
 
         # -----------------------------------------------
         # Fraud Heatmap by Country (if country data available)
