@@ -331,7 +331,7 @@ if page == "dashboard":
                 alt.Chart(ddf)
                 .mark_bar()
                 .encode(
-                    x="Device Used:N",
+                    x=alt.X("Device Used:N", axis=alt.Axis(labelAngle=0, title="Device Used")),
                     y="FraudRate:Q",
                     color="Device Used:N",
                     tooltip=["Device Used", "FraudRate"]
@@ -367,13 +367,13 @@ if page == "dashboard":
                 alt.Chart(fraud_only)
                 .mark_bar()
                 .encode(
-                    x="Customer Age:N",
+                    x=alt.X("Customer Age:N", axis=alt.Axis(labelAngle=0, title="Customer Age")),
                     y="count()",
                     color=alt.value("#4C78A8"),
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart5)    
+            st.altair_chart(chart5, use_container_width=True)  
 
         # -----------------------------------------------
         # Outlier scatterplot 
