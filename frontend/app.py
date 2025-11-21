@@ -1,4 +1,5 @@
 import streamlit as st
+import numpy as np
 import requests
 import os
 import re
@@ -216,18 +217,50 @@ if page == "dashboard":
         #Overview of data -- Transaction Amount 
         st.subheader("Overview — Dataset Distribution")
         amount = "Transaction Amount"
-        log_scale = st.checkbox("Log scale amount", value=False)
-        chart = (
-            alt.Chart(df)
-            .mark_bar()
-            .encode(
-                x=alt.X(f"{amount}:Q", bin=alt.Bin(maxbins=60), scale=alt.Scale(type='log') if log_scale else alt.Scale()),
-                y="count()",
-                tooltip=[alt.Tooltip(f"{amount}:Q"), "count()"]
+
+        # ensure numeric
+        df[amount] = pd.to_numeric(df[amount], errors="coerce")
+        valid_count = int(df[amount].notna().sum())
+        if valid_count == 0:
+            st.warning(f"No numeric values found in '{amount}'.")
+        else:
+            st.write(f"Valid numeric rows for plotting: {valid_count:,}")
+
+            # log toggle
+            log_scale = st.checkbox("Log scale amount", value=False)
+
+            # create sampled subset for performance (optional)
+            sample_n = st.slider("Sample rows (0 = no sampling)", min_value=0, max_value=5000, value=2000, step=250)
+            if sample_n and len(df) > sample_n:
+                df_plot = df.dropna(subset=[amount]).sample(n=sample_n, random_state=42).reset_index(drop=True)
+            else:
+                df_plot = df.dropna(subset=[amount]).reset_index(drop=True)
+
+            # produce transformed column for log plotting (use log1p to handle zeros)
+            df_plot["log_amount"] = np.log1p(df_plot[amount].clip(lower=0))
+
+            # choose x encoding depending on toggle
+            if log_scale:
+                x_enc = alt.X("log_amount:Q",
+                            bin=alt.Bin(maxbins=60),
+                            axis=alt.Axis(title="log(1 + Transaction Amount)"))
+            else:
+                x_enc = alt.X(f"{amount}:Q",
+                            bin=alt.Bin(maxbins=60),
+                            axis=alt.Axis(title="Transaction Amount"))
+
+            chart = (
+                alt.Chart(df_plot)
+                .mark_bar()
+                .encode(
+                    x=x_enc,
+                    y="count()",
+                    tooltip=[alt.Tooltip(f"{amount}:Q"), "count()"]
+                )
+                .properties(height=350)
             )
-            .properties(height=350)
-        )
-        st.altair_chart(chart)
+
+            st.altair_chart(chart, use_container_width=True)
 
 
         # -----------------------------------------------
