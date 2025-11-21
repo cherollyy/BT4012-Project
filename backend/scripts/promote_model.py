@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""Promote models/fraud_model.pkl.bak -> models/fraud_model.pkl
-
-Run this from repository root (or from backend/) to copy the backup into place.
-"""
 import argparse
 import os
 import shutil
@@ -22,7 +17,6 @@ if not BAK.exists():
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 try:
-    # try atomic replace
     try:
         os.replace(str(BAK), str(PKL))
         print(f"Moved {BAK} -> {PKL}")

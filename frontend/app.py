@@ -5,17 +5,17 @@ import re
 import pandas as pd
 import altair as alt
 from pathlib import Path
-# from geo import resolve_ip_batch, plot_country_choropleth
 import seaborn as sns, matplotlib.pyplot as plt
 import plotly.express as px
 import time
-
+import folium
+from folium.plugins import HeatMap
+import streamlit.components.v1 as components
 
 API_URL = os.getenv("API_URL", "http://backend:8000")
 
 st.set_page_config(page_title="FraudGuard AI", layout="wide")
 st.title("🛡️ FraudGuard AI Dashboard & Fraud Check")
-
 
 # --- Model status helper -------------------------------------------------
 def refresh_model_status():
@@ -60,7 +60,6 @@ def try_rerun():
 if "model_loaded" not in st.session_state:
     refresh_model_status()
 
-# --- big button styles -------------------------------------------------
 st.markdown(
     """
     <style>
@@ -100,78 +99,6 @@ with col2:
 
 page = st.session_state["page"]
 
-
-# -------------------------------
-# IP → Country (lightweight version)
-# -------------------------------
-def ip_to_country(ip):
-    """Simple placeholder converter."""
-    if pd.isna(ip):
-        return "Unknown"
-    if isinstance(ip, str):
-        # Private IP ranges → treat as internal
-        if ip.startswith("192.") or ip.startswith("172.") or ip.startswith("10."):
-            return "Local Network"
-    return "Unknown"
-
-
-# -------------------------------
-# Load training / sample data
-# -------------------------------
-# def load_training_dataframe():
-#     train_py = Path("backend/training/train_model.py")
-#     df = None
-#     discovered_path = None
-
-#     if train_py.exists():
-#         try:
-#             txt = train_py.read_text()
-#             m = re.search(r"RAW_DATA_PATH\s*=\s*[\"'](.+?)[\"']", txt)
-#             if m:
-#                 discovered_path = m.group(1)
-#                 p = Path(discovered_path)
-#                 if p.exists():
-#                     df = pd.read_csv(p)
-#                 else:
-#                     # try repo-local data folder (several likely locations)
-#                     alt_path = Path(discovered_path).name
-#                     candidates = [
-#                         Path("data") / alt_path,
-#                         Path(__file__).resolve().parents[1] / "data" / alt_path,  # repo root /data
-#                         Path("/app/data") / alt_path,  # container common mount
-#                     ]
-#                     for candidate in candidates:
-#                         if candidate.exists():
-#                             df = pd.read_csv(candidate)
-#                             break
-#         except Exception:
-#             df = None
-
-#     if df is None:
-#         # try several fallback data directories for CSV matching the expected fraud dataset name
-#         sample_candidates = [
-#             Path("data"),
-#             Path(__file__).resolve().parents[1] / "data",
-#             Path("/app/data"),
-#         ]
-#         for base in sample_candidates:
-#             if base.exists():
-#                 for f in base.glob("Fraudulent_E-Commerce_Transaction_Data*.csv"):
-#                     try:
-#                         df = pd.read_csv(f)
-#                         discovered_path = str(f)
-#                         break
-#                     except Exception:
-#                         df = None
-#                 if df is not None:
-#                     break
-
-#     return df, discovered_path
-
-
-
-
-
 # ================================
 # DASHBOARD PAGE
 # ================================
@@ -196,9 +123,9 @@ if page == "dashboard":
         st.stop()
     
     df = pd.read_csv(csv_path)
-#--------------------
+
     # -------------------------------
-    # Show Data + Charts (without preview/rows display)
+    # Show Data + Charts
     # -------------------------------
     if df is not None:
         # KPIs
@@ -228,7 +155,6 @@ if page == "dashboard":
             .properties(height=350)
         )
         st.altair_chart(chart)
-
 
         # -----------------------------------------------
         # Identify fraud column
@@ -305,7 +231,6 @@ if page == "dashboard":
             )
             st.altair_chart(chart3)
 
-
         # -----------------------------------------------
         # Time series: daily transactions & frauds with rolling average
         # -----------------------------------------------
@@ -320,7 +245,6 @@ if page == "dashboard":
         fig = px.line(daily, y=["transactions","transactions_ma7"], labels={"value":"Count","index":"Date"})
         fig.update_layout(title="Daily transactions (and 7-day MA)")
         st.plotly_chart(fig)
-
 
         # -----------------------------------------------
         # Hour-of-day vs Day-of-week heatmap (when frauds spike)
@@ -345,7 +269,6 @@ if page == "dashboard":
         sns.heatmap(heat_piv, cmap="Reds", ax=ax)
         ax.set_xlabel("Hour of day")
         st.pyplot(fig)
-
 
         # -----------------------------------------------
         # Fraud Rate by Device Type
@@ -383,7 +306,6 @@ if page == "dashboard":
             tooltip=["Product Category","fraud_count"]
         ).properties(height=600)
         st.altair_chart(chart)
-
 
         # -----------------------------------------------
         # Customer Age Distribution Among Fraud Cases
@@ -425,11 +347,20 @@ if page == "dashboard":
             x="Account Age Days",
             y="Transaction Amount",
             color="Is Fraudulent",               
-            hover_data=["Customer ID", "Transaction ID"],
             title="Amount vs Account Age (sample)"
         )
         st.plotly_chart(fig)
 
+        # -----------------------------------------------
+        # Embed pre-generated Fraud IP Heatmap HTML
+        # -----------------------------------------------
+        st.subheader("Fraud IP Heatmap")
+        existing_map_path = Path(__file__).resolve().parent / "ip_heatmap.html"
+        if existing_map_path.exists():
+            html = existing_map_path.read_text()
+            components.html(html, height=700)
+        else:
+            st.warning("IP heatmap file not found at frontend/ip_heatmap.html. Generate it first or place a prebuilt HTML file at that path.")
 
 # ================================
 # FRAUD CHECKER PAGE

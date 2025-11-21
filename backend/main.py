@@ -313,8 +313,6 @@ def _normalize_name(s: str) -> str:
     s2 = s2.strip("_")
     return s2
 
-
-
 class UserData(BaseModel):
     age: int
     account_age: int
@@ -626,9 +624,6 @@ def predict_fraud(payload: dict):
             expected_names = metadata.get("feature_names")
 
         if expected_names:
-            # If estimator exposes exact expected_names, try to map our df columns
-            # to those names by normalizing both sides. Build a new DataFrame
-            # with columns in estimator order, filling missing values with zeros.
             norm_expected = [_normalize_name(x) for x in expected_names]
             df_out = pd.DataFrame()
             for exp_name, exp_norm in zip(expected_names, norm_expected):
