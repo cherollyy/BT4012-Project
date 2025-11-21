@@ -197,7 +197,7 @@ if page == "dashboard":
         st.stop()
     
     df = pd.read_csv(csv_path)
-#--------------------
+    #--------------------
     # -------------------------------
     # Show Data + Charts (without preview/rows display)
     # -------------------------------
@@ -269,26 +269,42 @@ if page == "dashboard":
         # detect a fraud-like column (case-insensitive contains 'fraud')
         fraud_col = next((col for col in df.columns if 'fraud' in col.lower()), None)
 
+        # create a readable fraud label column (Fraud / Legit) if a fraud column exists
+        if fraud_col:
+            df["fraud_label"] = df[fraud_col].map({1: "Fraud", 0: "Legit", True: "Fraud", False: "Legit"}).fillna(df[fraud_col].astype(str))
+
         # -----------------------------------------------
         # Fraud vs Legit Transactions
         # -----------------------------------------------
+        # -----------------------------------------------
+        # Fraud vs Legit Transactions (show 1 and 0 upright)
+        # -----------------------------------------------
         if fraud_col:
             st.subheader("Fraud vs Legit Transactions")
+
+            # compute counts using original numeric values (1 and 0)
             fraud_counts = df[fraud_col].value_counts().reset_index()
             fraud_counts.columns = ["Class", "Count"]
+            # make sure Class is string so Altair treats it as categorical and we can match domain strings
+            fraud_counts["Class"] = fraud_counts["Class"].astype(str)
 
             chart1 = (
                 alt.Chart(fraud_counts)
                 .mark_bar()
                 .encode(
-                    x=alt.X("Class:N", title="0 = Legit, 1 = Fraud"),
-                    y="Count:Q",
-                    color="Class:N",
+                    x=alt.X("Class:N",
+                            axis=alt.Axis(labelAngle=0, title="Class (1 = Fraud, 0 = Legit)")),  # labelAngle=0 => upright/horizontal labels
+                    y=alt.Y("Count:Q", title="Count"),
+                    color=alt.Color(
+                        "Class:N",
+                        scale=alt.Scale(domain=["1", "0"], range=["red", "green"]),  # 1 -> red, 0 -> green
+                        legend=alt.Legend(title="Class")
+                    ),
                     tooltip=["Class", "Count"]
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart1)
+            st.altair_chart(chart1, use_container_width=True)
 
         # -----------------------------------------------
         # Transaction Amount Distribution
@@ -307,7 +323,7 @@ if page == "dashboard":
                 .encode(
                     x=alt.X(f"{amt_col}:Q", bin=alt.Bin(maxbins=50)),
                     y="count()",
-                    color=f"{fraud_col}:N" if fraud_col else alt.value("#4C78A8"),
+                    color=alt.Color("fraud_label:N", scale=alt.Scale(domain=["Fraud", "Legit"], range=["red", "green"])) if fraud_col else alt.value("#4C78A8"),
                 )
                 .properties(height=350)
             )
@@ -449,18 +465,41 @@ if page == "dashboard":
             .sample(n=sample_n, random_state=42)                           # sample reproducibly
             .reset_index(drop=True)
         )
-        # ensure fraud column is string/categorical so colors render properly
-        df_sample["Is Fraudulent"] = df_sample["Is Fraudulent"].astype(str)
+        # ensure we have a readable fraud label in the sample for coloring
+        if fraud_col:
+            df_sample["fraud_label"] = df_sample[fraud_col].map({1: "Fraud", 0: "Legit", True: "Fraud", False: "Legit"}).fillna(df_sample[fraud_col].astype(str))
+            color_field = "fraud_label"
+            color_map = {"Fraud": "red", "Legit": "green"}
+        else:
+            # fallback: use Is Fraudulent column as string if present, else no color mapping
+            if "Is Fraudulent" in df_sample.columns:
+                df_sample["fraud_label"] = df_sample["Is Fraudulent"].astype(str)
+                color_field = "fraud_label"
+                color_map = None
+            else:
+                color_field = None
+                color_map = None
+
         # now pass the sampled DF and the column name (not a full-length series)
-        import plotly.express as px
-        fig = px.scatter(
-            df_sample,
-            x="Account Age Days",
-            y="Transaction Amount",
-            color="Is Fraudulent",               
-            hover_data=["Customer ID", "Transaction ID"],
-            title="Amount vs Account Age (sample)"
-        )
+        if color_field and color_map:
+            fig = px.scatter(
+                df_sample,
+                x="Account Age Days",
+                y="Transaction Amount",
+                color=color_field,
+                color_discrete_map=color_map,
+                hover_data=["Customer ID", "Transaction ID"],
+                title="Amount vs Account Age (sample)"
+            )
+        else:
+            fig = px.scatter(
+                df_sample,
+                x="Account Age Days",
+                y="Transaction Amount",
+                hover_data=["Customer ID", "Transaction ID"],
+                title="Amount vs Account Age (sample)"
+            )
+
         st.plotly_chart(fig)
 
 
