@@ -271,7 +271,7 @@ if page == "dashboard":
                 alt.Chart(pm_df)
                 .mark_bar()
                 .encode(
-                    x="Payment Method:N",
+                    x=alt.X("Payment Method:N", axis=alt.Axis(labelAngle=0, title="Payment Method")),
                     y=alt.Y("FraudRate:Q", title="Fraud Rate (%)"),
                     color="Payment Method:N",
                     tooltip=["Payment Method", "FraudRate"]
