@@ -1,19 +1,4 @@
-#!/usr/bin/env python3
-"""Generate models/metadata.json by inspecting the preprocessed CSV used by bt4012_model.
-
-This avoids retraining: it extracts numeric feature column names the model expects
-based on the training preprocessing logic and writes a minimal metadata.json that
-lets the API map short payloads into a feature vector.
-
-Run from repo root or inside container:
-
-# host
-python backend/scripts/generate_metadata.py
-
-# inside docker
-docker compose run --rm backend python backend/scripts/generate_metadata.py
-
-"""
+#This file generates models/metadata.json by inspecting the preprocessed CSV used by bt4012_model
 import json
 from pathlib import Path
 import sys

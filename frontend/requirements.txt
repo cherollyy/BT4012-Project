@@ -6,3 +6,5 @@ vega_datasets
 pycountry
 plotly
 seaborn
+folium
+matplotlib
