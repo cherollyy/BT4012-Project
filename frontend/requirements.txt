@@ -5,5 +5,4 @@ altair
 vega_datasets
 pycountry
 plotly
-geoip2
-json
+seaborn

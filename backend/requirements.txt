@@ -4,3 +4,6 @@ numpy
 joblib
 scikit-learn
 pydantic
+xgboost
+lightgbm
+pandas

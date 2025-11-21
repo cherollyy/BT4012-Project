@@ -14,9 +14,6 @@ drive.mount("/content/drive", force_remount=True)
 
 ROOT = "/content/drive/MyDrive/BT4012"
 
-
-
-
 def print_head(title, char="=", width=80):
     line = char * width
     print(f"\n{line}\n{title}\n{line}")
@@ -25,10 +22,7 @@ def safe_lower_strip(series):
     return series.astype(str).str.lower().str.strip()
 
 def safe_int_from_codes(series, fill_value=0):
-    """
-    NaN, inf를 전부 처리한 뒤 int로 변환.
-    (주로 bucket / codes용)
-    """
+    
     s = pd.to_numeric(series, errors="coerce")
     s = s.replace([np.inf, -np.inf], np.nan)
     s = s.fillna(fill_value)

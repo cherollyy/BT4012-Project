@@ -1,11 +1,11 @@
 import os, gc
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
-from google.colab import drive
-drive.mount("/content/drive", force_remount=True)
+current_file_path = Path(__file__).resolve()
 
-ROOT = "/content/drive/MyDrive/BT4012"
+ROOT = current_file_path.parent.parent.parent
 
 def safe_lower_strip(series):
     return series.astype(str).str.lower().str.strip()
@@ -18,8 +18,8 @@ def safe_int_from_codes(series, fill_value=0):
 
 def build_counterfeit_risk_features():
     print("Building counterfeit stats...")
-    df_txn = pd.read_csv(os.path.join(ROOT, "_counterfeit_transactions.csv"))
-    df_prod = pd.read_csv(os.path.join(ROOT, "counterfeit_products.csv"))
+    df_txn = pd.read_csv(Path(ROOT, "data/_counterfeit_transactions.csv"))
+    df_prod = pd.read_csv(Path(ROOT, "data/counterfeit_products.csv"))
 
     df_txn["payment_method_norm"] = safe_lower_strip(df_txn["payment_method"])
     if "customer_location" in df_txn.columns:
@@ -65,7 +65,7 @@ def build_counterfeit_risk_features():
 
 def preprocessing_only(counter_stats):
     print("Loading main E-commerce dataset...")
-    df = pd.read_csv(os.path.join(ROOT, "Fraudulent_E-Commerce_Transaction_Data_FULL.csv"))
+    df = pd.read_csv(os.path.join(ROOT, "data/Fraudulent_E-Commerce_Transaction_Data_FULL.csv"))
 
     df = df.rename(columns=lambda c: c.strip().replace(" ", "_").replace("-", "_"))
     rename_map = {

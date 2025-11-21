@@ -2,6 +2,7 @@
 import os, gc, math, random
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 from sklearn.model_selection import StratifiedShuffleSplit, KFold
 from sklearn.metrics import roc_auc_score, precision_recall_fscore_support, accuracy_score
@@ -9,20 +10,21 @@ from sklearn.metrics import roc_auc_score, precision_recall_fscore_support, accu
 from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
 
-from google.colab import drive
-drive.mount("/content/drive", force_remount=True)
+current_file_path = Path(__file__).resolve()
+ROOT = current_file_path.parent.parent.parent
 
-ROOT = "/content/drive/MyDrive/BT4012"
-PREP_FILE = "Fraudulent_E-Commerce_Transaction_Data_FE.csv"
-PREP_PATH = os.path.join(ROOT, PREP_FILE)
+# Use /app/data in container, fallback to local data folder for development
+PREP_FILE = "Fraudulent_E-Commerce_Transaction_Data_MERGED.csv"
+CONTAINER_DATA_PATH = Path("/app/data", PREP_FILE)
+LOCAL_DATA_PATH = Path(ROOT, "data", PREP_FILE)
+PREP_PATH = CONTAINER_DATA_PATH if CONTAINER_DATA_PATH.exists() else LOCAL_DATA_PATH
 
 def print_head(title, char="=", width=80):
     line = char * width
     print(f"\n{line}\n{title}\n{line}")
 
 
-def add_target_encoding_kfold(X_train, y_train, X_valid, X_test,
-                              col, n_splits=5, smoothing=100):
+def add_target_encoding_kfold(X_train, y_train, X_valid, X_test, col, n_splits=5, smoothing=100):
     print(f"  - Target encoding: {col}")
     X_train = X_train.copy()
     X_valid = X_valid.copy()
@@ -96,13 +98,40 @@ def load_preprocessed_main():
     return df
 
 
-def run_high_perf_tree_ensemble_model_only(random_state=42):
+def run_high_perf_tree_ensemble_model_only(random_state=42, progress_callback=None):
     df = load_preprocessed_main()
-
+    # notify progress if callback provided
+    try:
+        if progress_callback:
+            progress_callback(10, "loaded data")
+    except Exception:
+        pass
+    
+    # Determine target column. Prefer 'is_fraudulent', but fall back to any
+    # column that contains the token 'fraud' (case-insensitive), e.g. 'Is Fraudulent'.
     target_col = "is_fraudulent"
     if target_col not in df.columns:
-        raise ValueError(f"Target column '{target_col}' not found in preprocessed CSV.")
-    y = df[target_col].astype(int)
+        # try to find a fraud-like column name
+        cand = next((c for c in df.columns if "fraud" in c.lower()), None)
+        if cand:
+            target_col = cand
+            print(f"Using detected target column: {target_col}")
+        else:
+            raise ValueError(f"Target column 'is_fraudulent' not found in preprocessed CSV.")
+
+    # Load target and coerce to binary 0/1 if necessary (handles 'Yes'/'No', True/False, etc.)
+    y = df[target_col]
+    try:
+        if y.dtype == object:
+            ys = y.astype(str).str.strip().str.lower()
+            mapping = {"1": 1, "0": 0, "true": 1, "false": 0, "yes": 1, "no": 0, "y": 1, "n": 0}
+            y = ys.map(mapping).fillna(pd.to_numeric(ys, errors="coerce")).fillna(0)
+        else:
+            y = pd.to_numeric(y, errors="coerce").fillna(0)
+    except Exception:
+        y = pd.to_numeric(y, errors="coerce").fillna(0)
+
+    y = y.astype(int)
 
     print_head("2) Prepare train/valid/test split")
     splitter = StratifiedShuffleSplit(
@@ -127,7 +156,12 @@ def run_high_perf_tree_ensemble_model_only(random_state=42):
     y_test = y.iloc[test_idx].reset_index(drop=True)
 
     print(f"[Split] Train: {train.shape}, Valid: {valid.shape}, Test: {test.shape}")
-
+    try:
+        if progress_callback:
+            progress_callback(30, "prepared splits")
+    except Exception:
+        pass
+    
     print_head("3) Encoding (Frequency + Target)")
 
     cat_cols = []
@@ -160,7 +194,12 @@ def run_high_perf_tree_ensemble_model_only(random_state=42):
         numeric_cols.remove(target_col)
 
     print(f"[Features] numeric feature count: {len(numeric_cols)}")
-
+    try:
+        if progress_callback:
+            progress_callback(45, "built feature matrix")
+    except Exception:
+        pass
+    
     X_train = train[numeric_cols].astype(float)
     X_valid = valid[numeric_cols].astype(float)
     X_test = test[numeric_cols].astype(float)
@@ -192,13 +231,40 @@ def run_high_perf_tree_ensemble_model_only(random_state=42):
         random_state=random_state,
     )
 
+    # If provided, attach a simple LightGBM callback to report training progress
+    lgb_callbacks = []
+    try:
+        if progress_callback:
+            total = int(getattr(lgbm, "n_estimators", 1200) or 1200)
+
+            def _lgb_progress(env):
+                try:
+                    itr = getattr(env, "iteration", None)
+                    if itr is None:
+                        itr = 0
+                    # map iteration to percent range 50-75
+                    pct = 50 + int(25 * min(1.0, (itr + 1) / max(1, total)))
+                    progress_callback(pct, f"lgbm iter {itr+1}/{total}")
+                except Exception:
+                    pass
+
+            lgb_callbacks = [ _lgb_progress ]
+    except Exception:
+        lgb_callbacks = []
+
+    progress_callback and progress_callback(50, "starting LGBM fit")
     lgbm.fit(
         X_train,
         y_train,
         eval_set=[(X_valid, y_valid)],
         eval_metric="auc",
-        callbacks=[],
+        callbacks=lgb_callbacks,
     )
+    try:
+        if progress_callback:
+            progress_callback(75, "lgbm finished")
+    except Exception:
+        pass
 
     xgb = XGBClassifier(
         n_estimators=900,
@@ -218,12 +284,24 @@ def run_high_perf_tree_ensemble_model_only(random_state=42):
         scale_pos_weight=neg_pos_ratio,
     )
 
+    try:
+        if progress_callback:
+            progress_callback(80, "starting xgb fit")
+    except Exception:
+        pass
+
     xgb.fit(
         X_train,
         y_train,
         eval_set=[(X_valid, y_valid)],
         verbose=False,
     )
+
+    try:
+        if progress_callback:
+            progress_callback(92, "xgb finished")
+    except Exception:
+        pass
 
     print_head("6) Predict & threshold tuning")
 
@@ -235,6 +313,11 @@ def run_high_perf_tree_ensemble_model_only(random_state=42):
     best_t, best_f1 = find_best_threshold(
         y_valid, valid_prob, start=0.1, end=0.9, step=0.01
     )
+    try:
+        if progress_callback:
+            progress_callback(95, "threshold tuning")
+    except Exception:
+        pass
     print(f"Best threshold on VALID: {best_t:.4f}, Best F1: {best_f1:.4f}")
 
     print_head(f"7) Final Evaluation (threshold={best_t:.4f})")
@@ -249,6 +332,16 @@ def run_high_perf_tree_ensemble_model_only(random_state=42):
     for k, v in test_metrics.items():
         print(f"{k:10s}: {v:.4f}")
 
+    try:
+        if progress_callback:
+            progress_callback(98, "finalizing")
+    except Exception:
+        pass
+
+    # Return the trained base estimators and metadata. Do NOT return
+    # a locally-defined EnsemblePredictor instance (nested classes are
+    # not picklable). The API caller (`backend/main.py`) will construct
+    # a top-level EnsemblePredictor for serialization if needed.
     return {
         "lgbm": lgbm,
         "xgb": xgb,
@@ -260,5 +353,9 @@ def run_high_perf_tree_ensemble_model_only(random_state=42):
 
 
 
-model_bundle = run_high_perf_tree_ensemble_model_only(random_state=42)
-gc.collect();
+
+if __name__ == "__main__":
+    # Allow the module to be executed directly for debugging/training, but
+    # avoid running training on import (imports should be side-effect free).
+    model_bundle = run_high_perf_tree_ensemble_model_only(random_state=42)
+    gc.collect()

@@ -5,15 +5,60 @@ import re
 import pandas as pd
 import altair as alt
 from pathlib import Path
-from geo import resolve_ip_batch, plot_country_choropleth
+# from geo import resolve_ip_batch, plot_country_choropleth
 import seaborn as sns, matplotlib.pyplot as plt
 import plotly.express as px
+import time
 
 
 API_URL = os.getenv("API_URL", "http://backend:8000")
 
 st.set_page_config(page_title="FraudGuard AI", layout="wide")
 st.title("🛡️ FraudGuard AI Dashboard & Fraud Check")
+
+
+# --- Model status helper -------------------------------------------------
+def refresh_model_status():
+    """Query backend /model_status and stash the result in session_state.
+
+    Called on first load and when user clicks Retry.
+    """
+    try:
+        r = requests.get(f"{API_URL}/model_status", timeout=4)
+        if r.ok:
+            data = r.json()
+            st.session_state["model_loaded"] = bool(data.get("loaded", False))
+            st.session_state["model_metadata"] = data.get("metadata")
+            st.session_state["model_status_msg"] = data.get("message")
+        else:
+            st.session_state["model_loaded"] = False
+            st.session_state["model_metadata"] = None
+            st.session_state["model_status_msg"] = f"HTTP {r.status_code}"
+    except Exception:
+        st.session_state["model_loaded"] = False
+        st.session_state["model_metadata"] = None
+        st.session_state["model_status_msg"] = "Error contacting backend"
+
+
+def try_rerun():
+    """Safely attempt to rerun the Streamlit script.
+
+    Some Streamlit builds do not expose `experimental_rerun`. Fall back to
+    toggling a session_state flag and stopping the script which causes Streamlit
+    to perform a rerun on the next user interaction.
+    """
+    try:
+        # preferred in many Streamlit versions
+        st.experimental_rerun()
+    except Exception:
+        # best-effort fallback
+        st.session_state["_rerun_toggle"] = not st.session_state.get("_rerun_toggle", False)
+        st.stop()
+
+
+# ensure we check model status at least once per session
+if "model_loaded" not in st.session_state:
+    refresh_model_status()
 
 # --- big button styles -------------------------------------------------
 st.markdown(
@@ -45,11 +90,11 @@ if "page" not in st.session_state:
 # render two large nav buttons side-by-side
 col1, col2 = st.columns(2)
 with col1:
-    if st.button("📊 Dashboard", key="nav_dashboard", type="primary" if st.session_state["page"] == "dashboard" else "secondary", use_container_width=True):
+    if st.button("📊 Dashboard", key="nav_dashboard", type="primary" if st.session_state["page"] == "dashboard" else "secondary", width="stretch"):
         st.session_state["page"] = "dashboard"
         st.rerun()
 with col2:
-    if st.button("🔍 Fraud Checker", key="nav_fraud", type="primary" if st.session_state["page"] == "fraud" else "secondary", use_container_width=True):
+    if st.button("🔍 Fraud Checker", key="nav_fraud", type="primary" if st.session_state["page"] == "fraud" else "secondary", width="stretch"):
         st.session_state["page"] = "fraud"
         st.rerun()
 
@@ -73,55 +118,58 @@ def ip_to_country(ip):
 # -------------------------------
 # Load training / sample data
 # -------------------------------
-def load_training_dataframe():
-    train_py = Path("backend/training/train_model.py")
-    df = None
-    discovered_path = None
+# def load_training_dataframe():
+#     train_py = Path("backend/training/train_model.py")
+#     df = None
+#     discovered_path = None
 
-    if train_py.exists():
-        try:
-            txt = train_py.read_text()
-            m = re.search(r"RAW_DATA_PATH\s*=\s*[\"'](.+?)[\"']", txt)
-            if m:
-                discovered_path = m.group(1)
-                p = Path(discovered_path)
-                if p.exists():
-                    df = pd.read_csv(p)
-                else:
-                    # try repo-local data folder (several likely locations)
-                    alt_path = Path(discovered_path).name
-                    candidates = [
-                        Path("data") / alt_path,
-                        Path(__file__).resolve().parents[1] / "data" / alt_path,  # repo root /data
-                        Path("/app/data") / alt_path,  # container common mount
-                    ]
-                    for candidate in candidates:
-                        if candidate.exists():
-                            df = pd.read_csv(candidate)
-                            break
-        except Exception:
-            df = None
+#     if train_py.exists():
+#         try:
+#             txt = train_py.read_text()
+#             m = re.search(r"RAW_DATA_PATH\s*=\s*[\"'](.+?)[\"']", txt)
+#             if m:
+#                 discovered_path = m.group(1)
+#                 p = Path(discovered_path)
+#                 if p.exists():
+#                     df = pd.read_csv(p)
+#                 else:
+#                     # try repo-local data folder (several likely locations)
+#                     alt_path = Path(discovered_path).name
+#                     candidates = [
+#                         Path("data") / alt_path,
+#                         Path(__file__).resolve().parents[1] / "data" / alt_path,  # repo root /data
+#                         Path("/app/data") / alt_path,  # container common mount
+#                     ]
+#                     for candidate in candidates:
+#                         if candidate.exists():
+#                             df = pd.read_csv(candidate)
+#                             break
+#         except Exception:
+#             df = None
 
-    if df is None:
-        # try several fallback data directories for CSV matching the expected fraud dataset name
-        sample_candidates = [
-            Path("data"),
-            Path(__file__).resolve().parents[1] / "data",
-            Path("/app/data"),
-        ]
-        for base in sample_candidates:
-            if base.exists():
-                for f in base.glob("Fraudulent_E-Commerce_Transaction_Data_2.csv"):
-                    try:
-                        df = pd.read_csv(f)
-                        discovered_path = str(f)
-                        break
-                    except Exception:
-                        df = None
-                if df is not None:
-                    break
+#     if df is None:
+#         # try several fallback data directories for CSV matching the expected fraud dataset name
+#         sample_candidates = [
+#             Path("data"),
+#             Path(__file__).resolve().parents[1] / "data",
+#             Path("/app/data"),
+#         ]
+#         for base in sample_candidates:
+#             if base.exists():
+#                 for f in base.glob("Fraudulent_E-Commerce_Transaction_Data*.csv"):
+#                     try:
+#                         df = pd.read_csv(f)
+#                         discovered_path = str(f)
+#                         break
+#                     except Exception:
+#                         df = None
+#                 if df is not None:
+#                     break
 
-    return df, discovered_path
+#     return df, discovered_path
+
+
+
 
 
 # ================================
@@ -130,9 +178,25 @@ def load_training_dataframe():
 if page == "dashboard":
     st.header("📊 Dashboard")
     st.markdown("Training data visualization and insights.")
-
-    # <-- CALL the loader here -->
-    df, discovered_path = load_training_dataframe()
+    
+    # Try multiple possible paths for the data file
+    possible_paths = [
+        Path("/app/data/Fraudulent_E-Commerce_Transaction_Data_2.csv"),  # Docker container mount
+        Path(__file__).resolve().parent.parent / "data" / "Fraudulent_E-Commerce_Transaction_Data_2.csv",  # Local dev
+    ]
+    
+    csv_path = None
+    for p in possible_paths:
+        if p.exists():
+            csv_path = p
+            break
+    
+    if csv_path is None:
+        st.error(f"❌ Data file not found. Tried paths:\n" + "\n".join(str(p) for p in possible_paths))
+        st.stop()
+    
+    df = pd.read_csv(csv_path)
+#--------------------
     # -------------------------------
     # Show Data + Charts (without preview/rows display)
     # -------------------------------
@@ -163,7 +227,7 @@ if page == "dashboard":
             )
             .properties(height=350)
         )
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart)
 
 
         # -----------------------------------------------
@@ -191,7 +255,7 @@ if page == "dashboard":
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart1, use_container_width=True)
+            st.altair_chart(chart1)
 
         # -----------------------------------------------
         # Transaction Amount Distribution
@@ -214,7 +278,7 @@ if page == "dashboard":
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart2, use_container_width=True)
+            st.altair_chart(chart2)
 
         # -----------------------------------------------
         # Fraud Rate by Payment Method
@@ -239,7 +303,7 @@ if page == "dashboard":
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart3, use_container_width=True)
+            st.altair_chart(chart3)
 
 
         # -----------------------------------------------
@@ -255,7 +319,7 @@ if page == "dashboard":
         import plotly.express as px
         fig = px.line(daily, y=["transactions","transactions_ma7"], labels={"value":"Count","index":"Date"})
         fig.update_layout(title="Daily transactions (and 7-day MA)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
 
         # -----------------------------------------------
@@ -302,23 +366,23 @@ if page == "dashboard":
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart4, use_container_width=True)
+            st.altair_chart(chart4)
 
         # -----------------------------------------------
         # Product Categories Distribution Among Fraud Cases
         # -----------------------------------------------
         st.subheader("Product Categories in Fraud Cases")
         cat = (df[df["Is Fraudulent"] == 1]
-       .groupby("Product Category")
-       .size()
-       .reset_index(name="fraud_count")
-       .sort_values("fraud_count", ascending=False).head(20))
+        .groupby("Product Category")
+        .size()
+        .reset_index(name="fraud_count")
+        .sort_values("fraud_count", ascending=False).head(20))
         chart = alt.Chart(cat).mark_bar().encode(
             x="fraud_count:Q",
             y=alt.Y("Product Category:N", sort='-x'),
             tooltip=["Product Category","fraud_count"]
         ).properties(height=600)
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart)
 
 
         # -----------------------------------------------
@@ -338,7 +402,7 @@ if page == "dashboard":
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart5, use_container_width=True)    
+            st.altair_chart(chart5)    
 
         # -----------------------------------------------
         # Outlier scatterplot 
@@ -364,176 +428,248 @@ if page == "dashboard":
             hover_data=["Customer ID", "Transaction ID"],
             title="Amount vs Account Age (sample)"
         )
-        st.plotly_chart(fig, use_container_width=True)
-
-
-        # -----------------------------------------------
-        # Singapore CPI Trend (Placeholder)
-        # -----------------------------------------------
-        '''
-        st.subheader("📈 Singapore CPI Trend (Placeholder)")
-        cpi_placeholder = pd.DataFrame({
-            "Month": pd.date_range("2023-01-01", periods=6, freq="M"),
-            "CPI": [101, 102, 102.5, 103, 103.7, 104]
-        }).set_index("Month")
-        st.line_chart(cpi_placeholder)'''
-
-        # -----------------------------------------------
-        # Fraud Heatmap by Country (if country data available)
-        # -----------------------------------------------
-        # Try to find country or location-like columns
-        country_col = None
-        for c in ["Country", "country", "COUNTRY", "country_name", "Customer Location", "customer_location", "Location", "location"]:
-            if c in df.columns:
-                country_col = c
-                break
-        
-        # Also try case-insensitive search
-        if country_col is None:
-            for col in df.columns:
-                if col.lower() in ["country", "location", "customer location"]:
-                    country_col = col
-                    break
-
-        ip_col = None
-        for c in ["IP Address", "IP", "ip", "Ip", "client_ip", "ip_address"]:
-            if c in df.columns:
-                ip_col = c
-                break
-
-        if country_col and fraud_col:
-            st.subheader("🌍 Fraud Heatmap by Country/Location")
-            country_fraud_df = (
-                df[df[fraud_col] == 1]
-                .groupby(country_col)
-                .size()
-                .reset_index(name="FraudCount")
-            )
-            
-            if len(country_fraud_df) > 0:
-                st.write(f"Fraud cases by {country_col}:")
-                st.bar_chart(country_fraud_df.set_index(country_col)["FraudCount"])
-        elif ip_col and fraud_col:
-            st.subheader("🌍 Fraud Heatmap by Country (IP Geolocation)")
-            st.info("This feature resolves IP addresses to countries and displays a geographic heatmap. Use the buttons below to resolve top fraud IPs or all unique IPs (careful with API limits).")
-
-            left_col, right_col = st.columns([2,1])
-
-            with left_col:
-                if st.button("Resolve top fraud IPs (recommended)", use_container_width=True):
-                    # Resolve only IPs from fraud cases, starting with most frequent
-                    fraud_ips_series = df.loc[df[fraud_col] == 1, ip_col].dropna().astype(str)
-                    freq = fraud_ips_series.value_counts()
-                    top_n = 500  # configurable: smaller = safer for free API
-                    top_ips = freq.head(top_n).index.tolist()
-
-                    if len(top_ips) == 0:
-                        st.warning("No IPs found among fraud cases.")
-                    else:
-                        with st.spinner(f"Resolving up to {len(top_ips)} IPs..."):
-                            ip_to_country = resolve_ip_batch(top_ips, max_per_run=top_n)
-                        df["_resolved_country"] = df[ip_col].astype(str).map(lambda ip: ip_to_country.get(ip))
-                        df["_resolved_country"] = df["_resolved_country"].fillna("Unknown")
-
-                        country_fraud_df = (
-                            df[df[fraud_col] == 1]
-                            .groupby("_resolved_country")
-                            .size()
-                            .reset_index(name="FraudCount")
-                        )
-
-                        st.dataframe(country_fraud_df.sort_values("FraudCount", ascending=False).head(200))
-                        plot_country_choropleth(country_fraud_df, country_col="_resolved_country", count_col="FraudCount")
-
-            with right_col:
-                if st.button("Resolve ALL unique IPs (dangerous)", use_container_width=True):
-                    unique_ips = df[ip_col].dropna().astype(str).unique().tolist()
-                    max_allowed = 2000
-                    if len(unique_ips) > max_allowed:
-                        st.warning(f"Too many unique IPs ({len(unique_ips)}). Use the 'top' option or increase max_per_run with caution.")
-                    else:
-                        with st.spinner(f"Resolving {len(unique_ips)} IPs..."):
-                            ip_to_country = resolve_ip_batch(unique_ips, max_per_run=len(unique_ips))
-                        df["_resolved_country"] = df[ip_col].astype(str).map(lambda ip: ip_to_country.get(ip))
-                        df["_resolved_country"] = df["_resolved_country"].fillna("Unknown")
-
-                        country_fraud_df = (
-                            df[df[fraud_col] == 1]
-                            .groupby("_resolved_country")
-                            .size()
-                            .reset_index(name="FraudCount")
-                        )
-
-                        st.dataframe(country_fraud_df.sort_values("FraudCount", ascending=False).head(200))
-                        plot_country_choropleth(country_fraud_df, country_col="_resolved_country", count_col="FraudCount")
-
-    else:
-        st.warning("⚠️ No training data found. Please ensure the dataset is available in `data/` or mounted in the container at `/app/data/`.")
+        st.plotly_chart(fig)
 
 
 # ================================
 # FRAUD CHECKER PAGE
-# (UNCHANGED)
 # ================================
 elif page == "fraud":
     st.header("🔍 Fraud Checker")
+    st.info("Single-check predictions are approximate — if you can provide historical/proxy values (customer totals, ip counts, amount per unit) add them in Advanced (optional) to improve accuracy.")
+    # show model readiness status
+    if st.session_state.get("model_loaded"):
+        st.success("Model loaded and ready to predict")
+    else:
+        # show progress bar while polling model status; this is a friendly UX to indicate
+        # background training / model loading. We poll /model_status repeatedly for up
+        # to MODEL_WAIT_TIMEOUT seconds (default 120s) and update a progress bar.
+        st.info("Model not loaded — attempting to detect training progress. Predictions are disabled until the model loads.")
+
+        # place holders for progress UI
+        progress_placeholder = st.empty()
+        prog = progress_placeholder.progress(0)
+
+        start = time.time()
+        max_wait = int(os.getenv("MODEL_WAIT_TIMEOUT", "120"))
+        pct = 0
+
+        # Active polling loop: query /train_status and update the progress bar
+        while time.time() - start < max_wait:
+            try:
+                r = requests.get(f"{API_URL}/train_status", timeout=4)
+                if r.ok:
+                    ts = r.json()
+                    in_prog = bool(ts.get("in_progress"))
+                    pct_remote = int(ts.get("percent") or 0)
+                    msg = ts.get("message")
+
+                    if in_prog:
+                        # show remote percent (cap to 95 while waiting for final save)
+                        display_pct = max(0, min(95, pct_remote))
+                        prog.progress(display_pct)
+                        progress_placeholder.info(msg or f"Training in progress ({display_pct}%)")
+                    else:
+                        # if remote says not in progress, check model_status to see if it's loaded
+                        r2 = requests.get(f"{API_URL}/model_status", timeout=4)
+                        if r2.ok:
+                            ms = r2.json()
+                            if ms.get("loaded"):
+                                prog.progress(100)
+                                st.session_state["model_loaded"] = True
+                                st.session_state["model_metadata"] = ms.get("metadata")
+                                progress_placeholder.success("Model loaded and ready to predict")
+                                break
+                            else:
+                                progress_placeholder.error("Model not loaded yet. Start training in the backend or try again.")
+                                break
+                else:
+                    # fallback: check model_status directly
+                    r2 = requests.get(f"{API_URL}/model_status", timeout=4)
+                    if r2.ok and r2.json().get("loaded"):
+                        prog.progress(100)
+                        st.session_state["model_loaded"] = True
+                        st.session_state["model_metadata"] = r2.json().get("metadata")
+                        progress_placeholder.success("Model loaded and ready to predict")
+                        break
+            except Exception:
+                # ignore transient errors
+                pass
+
+            # advance a bit to show activity while waiting
+            pct = min(95, pct + 5)
+            prog.progress(pct)
+            time.sleep(2)
+
+        if not st.session_state.get("model_loaded"):
+            progress_placeholder.error("Model still not loaded after waiting. Click Retry or ask an admin to train the model.")
+
+        # retry button (keeps same behaviour as before)
+        colr, colc = st.columns([3,1])
+        with colr:
+            if st.button("Retry model status", key="retry_header"):
+                refresh_model_status()
+                try_rerun()
+        with colc:
+            st.write(" ")
+
     user_tab, tx_tab = st.tabs(["User Fraud Check", "Transaction Fraud Check"])
+
+    def build_features_from_inputs(kind: str, feature_names: list):
+        """Best-effort mapping from UI inputs to model feature names.
+
+        kind: 'user' or 'tx'
+        feature_names: list of strings from metadata (may contain spaces/caps)
+        """
+        features = {}
+        # helper to find a value from session state with fallback
+        def safe(key, default=0):
+            return st.session_state.get(key, default)
+
+        for fname in (feature_names or []):
+            low = fname.lower()
+            # transaction amount
+            if "amount" in low:
+                if kind == "tx":
+                    features[fname] = float(safe("amount_input", 0.0) or 0.0)
+                else:
+                    features[fname] = float(safe("avg_order_input", 0.0) or 0.0)
+            # quantity / units
+            elif "quantity" in low or "qty" in low:
+                if kind == "tx":
+                    features[fname] = int(safe("cust_total_txn_tx", 1) or 1)
+                else:
+                    features[fname] = int(safe("total_tx_input", 1) or 1)
+            # customer / customer age
+            elif "customer" in low and "age" in low:
+                if kind == "tx":
+                    features[fname] = int(safe("customer_age_input", 0) or 0)
+                else:
+                    features[fname] = int(safe("age_input", 0) or 0)
+            # account age
+            elif "account" in low and "age" in low:
+                features[fname] = int(safe("account_age_input", 0) or 0)
+            # transaction hour
+            elif "hour" in low:
+                features[fname] = int(safe("transaction_hour_input", 12) or 12)
+            else:
+                # fallback: try some commonly available inputs
+                if kind == "tx":
+                    features[fname] = float(safe("amount_input", 0.0) or 0.0)
+                else:
+                    features[fname] = float(safe("avg_order_input", 0.0) or 0.0)
+
+        return features
 
     with user_tab:
         st.subheader("👤 User Information Check")
         col1, col2 = st.columns(2)
         with col1:
-            age = st.number_input("Age *", 18, 100, 30)
-            past_fraud = st.number_input("Past Fraud Cases", 0, 50, 0)
+            age = st.number_input("Age *", 18, 100, 30, key="age_input")
+            past_fraud = st.number_input("Past Fraud Cases", 0, 50, 0, key="past_fraud_input")
+            avg_order = st.number_input("Average Order Value ($)", 0.0, 50000.0, 150.0, key="avg_order_input")
         with col2:
-            account_age = st.number_input("Account Age (days) *", 0, 5000, 365)
-            total_tx = st.number_input("Total Transactions *", 0, 5000, 15)
-            avg_order = st.number_input("Average Order Value ($)", 0.0, 50000.0, 150.0)
+            account_age = st.number_input("Account Age (days)", 0, 5000, 365, help="Number of days since account creation", key="account_age_input")
+            total_tx = st.number_input("Total Transactions", 0, 5000, 15, help="Total number of transactions by this user (optional)", key="total_tx_input")
 
-        if st.button("🔍 Analyze User Fraud Risk", use_container_width=True):
-            data = {
-                "age": age,
-                "account_age": account_age,
-                "total_transactions": total_tx,
-                "past_fraud": past_fraud,
-                "avg_order_value": avg_order,
-            }
-            try:
-                r = requests.post(f"{API_URL}/predict_user", json=data, timeout=5).json()
-                st.success(f"Fraud Probability: {r['fraud_probability']}%")
-                st.write(f"Risk Level: **{r['risk_level']}**")
-            except Exception as e:
-                st.error(f"API error: {e}")
+        # Advanced optional inputs for better single-row inference
+        with st.expander("Advanced (optional): provide proxies for historical aggregates"):
+            cust_total_txn = st.number_input("Customer total transactions (proxy)", 0, 100000, 0, help="Approximate total transactions for this customer; helps model estimate customer history", key="cust_total_txn_user")
+            cust_avg_amt = st.number_input("Customer average order value ($)", 0.0, 1e7, 0.0, help="Approx average order value for this customer", key="cust_avg_amt_user")
+            ip_txn_count = st.number_input("IP transaction count (proxy)", 0, 100000, 0, help="Approx number of transactions from this IP address", key="ip_txn_count_user")
+            
+        if not st.session_state.get("model_loaded", False):
+            st.warning("Model not loaded — predictions disabled. Retry or ask an admin to train the model.")
+            if st.button("Retry model status", key="retry_user"):
+                refresh_model_status()
+                try_rerun()
+        else:
+            if st.button("🔍 Analyze User Fraud Risk", width='stretch',key="analyze_user"):
+                # prefer to build a 'features' dict matching model metadata when available
+                meta = st.session_state.get("model_metadata") or {}
+                fns = meta.get("feature_names") if isinstance(meta, dict) else None
+                features = build_features_from_inputs("user", fns)
+
+                # include optional advanced inputs only when provided (non-zero)
+                if cust_total_txn and cust_total_txn > 0:
+                    features.setdefault("cust_total_txn", int(cust_total_txn))
+                if cust_avg_amt and cust_avg_amt > 0:
+                    features.setdefault("cust_avg_amt", float(cust_avg_amt))
+                if ip_txn_count and ip_txn_count > 0:
+                    features.setdefault("ip_txn_count", int(ip_txn_count))
+
+                payload = {"features": features}
+                try:
+                    r = requests.post(f"{API_URL}/predict_fraud", json=payload, timeout=15)
+                    if r.status_code == 200:
+                        j = r.json()
+                        st.success(f"Fraud Probability: {j.get('fraud_probability')}%")
+                    else:
+                        st.error(f"API error (HTTP {r.status_code}): {r.text}")
+                except Exception as e:
+                    st.error(f"API error: {e}")
 
     with tx_tab:
         st.subheader("💳 Transaction Details Check")
         col1, col2 = st.columns(2)
         with col1:
-            amount = st.number_input("Transaction Amount ($) *", 0.0, 100000.0, 299.99)
-            payment_method = st.selectbox("Payment Method *", ["Credit Card", "Debit Card", "PayPal", "Bank Transfer"])
-            device = st.selectbox("Device Type *", ["Desktop", "Mobile", "Tablet"])
+            amount = st.number_input("Transaction Amount ($)", 0.0, 100000.0, 299.99, key="amount_input")
+            payment_method = st.selectbox("Payment Method", ["Credit Card", "Debit Card", "PayPal", "Bank Transfer"])
+            device = st.selectbox("Device Type", ["Desktop", "Mobile", "Tablet"])
         with col2:
-            ip = st.text_input("IP Address")
-            browser = st.selectbox("Browser Type", ["Chrome", "Firefox", "Safari", "Edge"])
-            shipping = st.text_input("Shipping Address *")
+            ip = st.text_input("IP Address", help="Optional - can help detect suspicious IPs")
+            browser = st.selectbox("Browser Type", ["Chrome", "Firefox", "Safari", "Edge"], help="Browser used for transaction")
+            shipping = st.text_input("Shipping Address")
             billing = st.text_input("Billing Address")
 
-        if st.button("🔍 Analyze Transaction Fraud Risk", use_container_width=True):
-            data = {
-                "amount": amount,
-                "payment_method": payment_method,
-                "device": device,
-                "ip": ip,
-                "browser": browser,
-                "shipping": shipping,
-                "billing": billing,
-            }
-            try:
-                r = requests.post(f"{API_URL}/predict_transaction", json=data, timeout=5).json()
-                st.success(f"Fraud Probability: {r['fraud_probability']}%")
-                st.write(f"Risk Level: **{r['risk_level']}**")
-            except Exception as e:
-                st.error(f"API error: {e}")
+        # Advanced optional inputs for transaction
+        with st.expander("Advanced (optional): provide proxies for aggregates"):
+            amount_per_unit = st.number_input("Amount per unit ($)", 0.0, 1e7, 0.0, help="Transaction amount divided by quantity (if applicable)", key="amount_per_unit_tx")
+            cust_total_txn_tx = st.number_input("Customer total transactions (proxy)", 0, 100000, 0, help="Approx total transactions for this customer", key="cust_total_txn_tx")
+            ip_txn_count_tx = st.number_input("IP transaction count (proxy)", 0, 100000, 0, help="Approx number of transactions from this IP address", key="ip_txn_count_tx")
+
+        transaction_hour = st.number_input("Transaction Hour (0-23)", 0, 23, 12, key="transaction_hour_input")
+        customer_age = st.number_input("Customer Age", 0, 120, 30, key="customer_age_input")
+
+        if not st.session_state.get("model_loaded", False):
+            st.warning("Model not loaded — predictions disabled. Retry or ask an admin to train the model.")
+            if st.button("Retry model status", key="retry_tx"):
+                refresh_model_status()
+                try_rerun()
+        else:
+            if st.button("🔍 Analyze Transaction Fraud Risk", width='stretch', key="analyze_tx"):
+                # send a transaction-style payload (user-friendly fields) so backend can map them
+                payload = {
+                    "transaction": {
+                        "amount": float(amount),
+                        "payment_method": payment_method,
+                        "device": device,
+                        "ip": ip,
+                        "browser": browser,
+                        "shipping": shipping,
+                        "billing": billing,
+                        "transaction_hour": int(transaction_hour),
+                        "age": int(customer_age),
+                    }
+                }
+
+                # include optional advanced inputs only when provided
+                if amount_per_unit and amount_per_unit > 0:
+                    payload["transaction"]["amount_per_unit"] = float(amount_per_unit)
+                if cust_total_txn_tx and cust_total_txn_tx > 0:
+                    payload["transaction"]["cust_total_txn"] = int(cust_total_txn_tx)
+                if ip_txn_count_tx and ip_txn_count_tx > 0:
+                    payload["transaction"]["ip_txn_count"] = int(ip_txn_count_tx)
+
+                try:
+                    r = requests.post(f"{API_URL}/predict_fraud", json=payload, timeout=15)
+                    if r.status_code == 200:
+                        j = r.json()
+                        st.success(f"Fraud Probability: {j.get('fraud_probability')}%")
+                    else:
+                        st.error(f"API error (HTTP {r.status_code}): {r.text}")
+                except Exception as e:
+                    st.error(f"API error: {e}")
 
 else:
     st.session_state["page"] = "dashboard"
