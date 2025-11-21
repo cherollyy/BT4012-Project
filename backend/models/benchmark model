@@ -1,0 +1,227 @@
+import os, gc
+import numpy as np
+import pandas as pd
+
+from sklearn.metrics import (
+    roc_auc_score,
+    precision_recall_fscore_support,
+    accuracy_score,
+)
+from lightgbm import LGBMClassifier
+
+
+ROOT = os.path.expanduser("~/Desktop/BT4012")
+IEEE_TRAIN = os.path.join(ROOT, "ieee_merged_train.csv")
+IEEE_TEST  = os.path.join(ROOT, "ieee_merged_test.csv")
+
+
+def print_head(title, char="=", width=80):
+    line = char * width
+    print(f"\n{line}\n{title}\n{line}")
+
+def find_best_threshold(y_true, prob, start=0.05, end=0.5, step=0.01):
+    best_t, best_f1 = 0.5, -1
+    for t in np.arange(start, end + 1e-9, step):
+        pred = (prob >= t).astype(int)
+        p, r, f1, _ = precision_recall_fscore_support(
+            y_true, pred, average="binary", zero_division=0
+        )
+        if f1 > best_f1:
+            best_f1 = f1
+            best_t = t
+    return float(best_t), float(best_f1)
+
+def evaluate_all(y_true, prob, threshold):
+    auc = roc_auc_score(y_true, prob)
+    pred = (prob >= threshold).astype(int)
+    acc = accuracy_score(y_true, pred)
+    p, r, f1, _ = precision_recall_fscore_support(
+        y_true, pred, average="binary", zero_division=0
+    )
+    return {
+        "auc": float(auc),
+        "accuracy": float(acc),
+        "precision": float(p),
+        "recall": float(r),
+        "f1": float(f1),
+    }
+
+
+print_head("1) Load merged IEEE train/test")
+train = pd.read_csv(IEEE_TRAIN)
+test  = pd.read_csv(IEEE_TEST)
+
+print(f"[Train] shape: {train.shape}")
+print(f"[Test ] shape: {test.shape}")
+
+rename_id_cols = {}
+for col in test.columns:
+    if col.startswith("id-"):
+        new_col = col.replace("id-", "id_")
+        rename_id_cols[col] = new_col
+
+if rename_id_cols:
+    print("  Renaming ID columns:", rename_id_cols)
+    test = test.rename(columns=rename_id_cols)
+
+# sanity check: train과 test의 공통 컬럼 확인
+common_cols = [c for c in train.columns if c in test.columns]
+print(f"  #Common columns (features+ID): {len(common_cols)}")
+
+
+print_head("2) Basic preprocessing")
+
+target_col = "isFraud"
+if target_col not in train.columns:
+    raise ValueError(f"'{target_col}' column not found in ieee_merged_train.csv")
+
+y = train[target_col].astype(int)
+
+train_feat = train.drop(columns=[target_col])
+id_col = "TransactionID"
+if id_col in train_feat.columns:
+    train_feat = train_feat.drop(columns=[id_col])
+if id_col in test.columns:
+    test_id = test[id_col].copy()
+    test_feat = test.drop(columns=[id_col])
+else:
+    test_id = pd.Series(np.arange(len(test)), name="TransactionID")
+    test_feat = test.copy()
+
+obj_cols = train_feat.select_dtypes(include=["object"]).columns.tolist()
+print("  Object columns to encode:", obj_cols[:10], "..." if len(obj_cols) > 10 else "")
+
+for col in obj_cols:
+    train_feat[col] = train_feat[col].fillna("missing")
+    test_feat[col]  = test_feat[col].fillna("missing")
+
+    freq = train_feat[col].value_counts(dropna=False)
+    train_feat[col + "_freq"] = train_feat[col].map(freq).astype("float32")
+    test_feat[col + "_freq"]  = test_feat[col].map(freq).fillna(0).astype("float32")
+
+train_feat = train_feat.drop(columns=obj_cols)
+test_feat  = test_feat.drop(columns=obj_cols)
+
+for df_ in [train_feat, test_feat]:
+    df_.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df_.fillna(0.0, inplace=True)
+
+feature_cols = train_feat.columns.tolist()
+print_head("3) Feature columns")
+print(f"  #features: {len(feature_cols)}")
+
+
+print_head("4) Time-based split (70 / 15 / 15)")
+
+if "TransactionDT" not in train_feat.columns:
+    raise ValueError("'TransactionDT' column is required for time-based split.")
+
+order = np.argsort(train["TransactionDT"].values)
+X_all = train_feat.iloc[order].reset_index(drop=True)
+y_all = y.iloc[order].reset_index(drop=True)
+
+n = len(X_all)
+n_train = int(n * 0.70)
+n_valid = int(n * 0.85)
+
+X_train = X_all.iloc[:n_train].reset_index(drop=True)
+y_train = y_all.iloc[:n_train].reset_index(drop=True)
+
+X_valid = X_all.iloc[n_train:n_valid].reset_index(drop=True)
+y_valid = y_all.iloc[n_train:n_valid].reset_index(drop=True)
+
+X_hold  = X_all.iloc[n_valid:].reset_index(drop=True)
+y_hold  = y_all.iloc[n_valid:].reset_index(drop=True)
+
+print(f"  Train  : {X_train.shape}")
+print(f"  Valid  : {X_valid.shape}")
+print(f"  Holdout: {X_hold.shape}")
+
+# test도 feature 컬럼 맞추기
+X_test_full = test_feat[feature_cols].copy()
+
+
+print_head("5) Train LightGBM baseline (benchmark)")
+
+pos_rate = y_train.mean()
+neg_pos_ratio = (1 - pos_rate) / max(pos_rate, 1e-6)
+print(f"  pos_rate: {pos_rate:.4f}, scale_pos_weight ~ {neg_pos_ratio:.2f}")
+
+lgbm = LGBMClassifier(
+    n_estimators=800,
+    learning_rate=0.05,
+    num_leaves=128,
+    max_depth=-1,
+    min_child_samples=40,
+    subsample=0.8,
+    subsample_freq=1,
+    colsample_bytree=0.8,
+    reg_alpha=1.0,
+    reg_lambda=2.0,
+    objective="binary",
+    random_state=42,
+    n_jobs=-1,
+    scale_pos_weight=neg_pos_ratio,
+)
+
+lgbm.fit(
+    X_train,
+    y_train,
+    eval_set=[(X_valid, y_valid)],
+    eval_metric="auc",
+    
+)
+
+print_head("6) VALID evaluation")
+
+valid_prob = lgbm.predict_proba(X_valid)[:, 1]
+best_t, best_f1 = find_best_threshold(y_valid, valid_prob, start=0.05, end=0.5, step=0.01)
+print(f"  Best threshold on VALID = {best_t:.4f}, F1 = {best_f1:.4f}")
+
+valid_metrics = evaluate_all(y_valid, valid_prob, best_t)
+print("\n==== VALID Metrics ====")
+for k, v in valid_metrics.items():
+    print(f"{k:10s}: {v:.4f}")
+
+hold_prob = lgbm.predict_proba(X_hold)[:, 1]
+hold_metrics = evaluate_all(y_hold, hold_prob, best_t)
+print("\n==== HOLDOUT Metrics (last 15% of time) ====")
+for k, v in hold_metrics.items():
+    print(f"{k:10s}: {v:.4f}")
+
+
+print_head("7) Train FINAL model on full train for test prediction")
+
+pos_rate_full = y.mean()
+neg_pos_ratio_full = (1 - pos_rate_full) / max(pos_rate_full, 1e-6)
+print(f"  pos_rate(full): {pos_rate_full:.4f}, scale_pos_weight ~ {neg_pos_ratio_full:.2f}")
+
+lgbm_final = LGBMClassifier(
+    n_estimators=800,
+    learning_rate=0.05,
+    num_leaves=128,
+    max_depth=-1,
+    min_child_samples=40,
+    subsample=0.8,
+    subsample_freq=1,
+    colsample_bytree=0.8,
+    reg_alpha=1.0,
+    reg_lambda=2.0,
+    objective="binary",
+    random_state=42,
+    n_jobs=-1,
+    scale_pos_weight=neg_pos_ratio_full,
+)
+
+lgbm_final.fit(
+    train_feat[feature_cols],
+    y,
+    eval_metric="auc",
+)
+
+print_head("8) Predict on ieee_merged_test.csv and save submission")
+
+test_prob = lgbm_final.predict_proba(X_test_full)[:, 1]
+
+
+gc.collect()
