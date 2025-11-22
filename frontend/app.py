@@ -271,7 +271,7 @@ if page == "dashboard":
                 alt.Chart(pm_df)
                 .mark_bar()
                 .encode(
-                    x="Payment Method:N",
+                    x=alt.X("Payment Method:N", axis=alt.Axis(labelAngle=0, title="Payment Method")),
                     y=alt.Y("FraudRate:Q", title="Fraud Rate (%)"),
                     color="Payment Method:N",
                     tooltip=["Payment Method", "FraudRate"]
@@ -289,11 +289,61 @@ if page == "dashboard":
         daily.columns = ["transactions","frauds"]
         daily["fraud_rate"] = 100 * daily["frauds"] / daily["transactions"].replace(0,1)
         daily["transactions_ma7"] = daily["transactions"].rolling(7).mean()
+        daily["frauds_ma7"] = daily["frauds"].rolling(7).mean()
 
-        import plotly.express as px
-        fig = px.line(daily, y=["transactions","transactions_ma7"], labels={"value":"Count","index":"Date"})
-        fig.update_layout(title="Daily transactions (and 7-day MA)")
-        st.plotly_chart(fig)
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        # Create figure with secondary y-axis
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Add total transactions
+        fig.add_trace(
+            go.Scatter(x=daily.index, y=daily["transactions"], name="Total Transactions", 
+                    line=dict(color='lightblue', width=1), opacity=0.7),
+            secondary_y=False,
+        )
+
+        # Add 7-day MA for transactions
+        fig.add_trace(
+            go.Scatter(x=daily.index, y=daily["transactions_ma7"], name="Transactions (7-day MA)", 
+                    line=dict(color='blue', width=2)),
+            secondary_y=False,
+        )
+
+        # Add frauds
+        fig.add_trace(
+            go.Scatter(x=daily.index, y=daily["frauds"], name="Frauds", 
+                    line=dict(color='lightcoral', width=1), opacity=0.7),
+            secondary_y=False,
+        )
+
+        # Add 7-day MA for frauds
+        fig.add_trace(
+            go.Scatter(x=daily.index, y=daily["frauds_ma7"], name="Frauds (7-day MA)", 
+                    line=dict(color='red', width=2)),
+            secondary_y=False,
+        )
+
+        # Add fraud rate on secondary y-axis
+        fig.add_trace(
+            go.Scatter(x=daily.index, y=daily["fraud_rate"], name="Fraud Rate (%)", 
+                    line=dict(color='orange', width=2, dash='dash')),
+            secondary_y=True,
+        )
+
+        # Set axis titles
+        fig.update_xaxes(title_text="Date")
+        fig.update_yaxes(title_text="Count", secondary_y=False)
+        fig.update_yaxes(title_text="Fraud Rate (%)", secondary_y=True)
+
+        fig.update_layout(
+            title="Daily Transactions, Frauds & Fraud Rate with 7-day Moving Average",
+            hovermode="x unified",
+            height=450
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
 
         # -----------------------------------------------
         # Hour-of-day vs Day-of-week heatmap (when frauds spike)

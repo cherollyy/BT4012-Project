@@ -435,9 +435,9 @@ services:
 
 ## 🐛 Troubleshooting
 
-### "Model not loaded" Error
+### "Model not loaded" Error or Model loaded but nothing appearing 
 
-**Symptom**: Fraud Checker shows "Model still not loaded after waiting"
+**Symptom**: Fraud Checker shows "Model still not loaded after waiting" or the model is loaded but nothing appears below
 
 **Solutions:** 
 1. **Wait for training to complete** (first startup takes 30s–5min): go to console and check that a fraud model pkl file was saved. If not, wait. 
