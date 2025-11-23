@@ -195,42 +195,26 @@ if page == "dashboard":
         # detect a fraud-like column (case-insensitive contains 'fraud')
         fraud_col = next((col for col in df.columns if 'fraud' in col.lower()), None)
 
-        # create a readable fraud label column (Fraud / Legit) if a fraud column exists
-        if fraud_col:
-            df["fraud_label"] = df[fraud_col].map({1: "Fraud", 0: "Legit", True: "Fraud", False: "Legit"}).fillna(df[fraud_col].astype(str))
-
         # -----------------------------------------------
         # Fraud vs Legit Transactions
         # -----------------------------------------------
-        # -----------------------------------------------
-        # Fraud vs Legit Transactions (show 1 and 0 upright)
-        # -----------------------------------------------
         if fraud_col:
             st.subheader("Fraud vs Legit Transactions")
-
-            # compute counts using original numeric values (1 and 0)
             fraud_counts = df[fraud_col].value_counts().reset_index()
             fraud_counts.columns = ["Class", "Count"]
-            # make sure Class is string so Altair treats it as categorical and we can match domain strings
-            fraud_counts["Class"] = fraud_counts["Class"].astype(str)
 
             chart1 = (
                 alt.Chart(fraud_counts)
                 .mark_bar()
                 .encode(
-                    x=alt.X("Class:N",
-                            axis=alt.Axis(labelAngle=0, title="Class (1 = Fraud, 0 = Legit)")),  # labelAngle=0 => upright/horizontal labels
-                    y=alt.Y("Count:Q", title="Count"),
-                    color=alt.Color(
-                        "Class:N",
-                        scale=alt.Scale(domain=["1", "0"], range=["red", "green"]),  # 1 -> red, 0 -> green
-                        legend=alt.Legend(title="Class")
-                    ),
+                    x=alt.X("Class:N", title="0 = Legit, 1 = Fraud"),
+                    y="Count:Q",
+                    color="Class:N",
                     tooltip=["Class", "Count"]
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart1, use_container_width=True)
+            st.altair_chart(chart1)
 
         # -----------------------------------------------
         # Transaction Amount Distribution
@@ -249,7 +233,7 @@ if page == "dashboard":
                 .encode(
                     x=alt.X(f"{amt_col}:Q", bin=alt.Bin(maxbins=50)),
                     y="count()",
-                    color=alt.Color("fraud_label:N", scale=alt.Scale(domain=["Fraud", "Legit"], range=["red", "green"])) if fraud_col else alt.value("#4C78A8"),
+                    color=f"{fraud_col}:N" if fraud_col else alt.value("#4C78A8"),
                 )
                 .properties(height=350)
             )
@@ -271,7 +255,7 @@ if page == "dashboard":
                 alt.Chart(pm_df)
                 .mark_bar()
                 .encode(
-                    x=alt.X("Payment Method:N", axis=alt.Axis(labelAngle=0, title="Payment Method")),
+                    x="Payment Method:N",
                     y=alt.Y("FraudRate:Q", title="Fraud Rate (%)"),
                     color="Payment Method:N",
                     tooltip=["Payment Method", "FraudRate"]
@@ -289,66 +273,16 @@ if page == "dashboard":
         daily.columns = ["transactions","frauds"]
         daily["fraud_rate"] = 100 * daily["frauds"] / daily["transactions"].replace(0,1)
         daily["transactions_ma7"] = daily["transactions"].rolling(7).mean()
-        daily["frauds_ma7"] = daily["frauds"].rolling(7).mean()
 
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-
-        # Create figure with secondary y-axis
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-        # Add total transactions
-        fig.add_trace(
-            go.Scatter(x=daily.index, y=daily["transactions"], name="Total Transactions", 
-                    line=dict(color='lightblue', width=1), opacity=0.7),
-            secondary_y=False,
-        )
-
-        # Add 7-day MA for transactions
-        fig.add_trace(
-            go.Scatter(x=daily.index, y=daily["transactions_ma7"], name="Transactions (7-day MA)", 
-                    line=dict(color='blue', width=2)),
-            secondary_y=False,
-        )
-
-        # Add frauds
-        fig.add_trace(
-            go.Scatter(x=daily.index, y=daily["frauds"], name="Frauds", 
-                    line=dict(color='lightcoral', width=1), opacity=0.7),
-            secondary_y=False,
-        )
-
-        # Add 7-day MA for frauds
-        fig.add_trace(
-            go.Scatter(x=daily.index, y=daily["frauds_ma7"], name="Frauds (7-day MA)", 
-                    line=dict(color='red', width=2)),
-            secondary_y=False,
-        )
-
-        # Add fraud rate on secondary y-axis
-        fig.add_trace(
-            go.Scatter(x=daily.index, y=daily["fraud_rate"], name="Fraud Rate (%)", 
-                    line=dict(color='orange', width=2, dash='dash')),
-            secondary_y=True,
-        )
-
-        # Set axis titles
-        fig.update_xaxes(title_text="Date")
-        fig.update_yaxes(title_text="Count", secondary_y=False)
-        fig.update_yaxes(title_text="Fraud Rate (%)", secondary_y=True)
-
-        fig.update_layout(
-            title="Daily Transactions, Frauds & Fraud Rate with 7-day Moving Average",
-            hovermode="x unified",
-            height=450
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
+        import plotly.express as px
+        fig = px.line(daily, y=["transactions","transactions_ma7"], labels={"value":"Count","index":"Date"})
+        fig.update_layout(title="Daily transactions (and 7-day MA)")
+        st.plotly_chart(fig)
 
         # -----------------------------------------------
         # Hour-of-day vs Day-of-week heatmap (when frauds spike)
         # -----------------------------------------------
-        st.subheader("Fraud Heatmap by Hour of Day and Day of Week (dow)")
+        st.subheader("Fraud Heatmap by Hour of Day and Day of Week")
         df["Transaction Date"] = pd.to_datetime(df["Transaction Date"])
         df["hour"] = df["Transaction Date"].dt.hour
         df["dow"] = df["Transaction Date"].dt.day_name()
@@ -381,7 +315,7 @@ if page == "dashboard":
                 alt.Chart(ddf)
                 .mark_bar()
                 .encode(
-                    x=alt.X("Device Used:N", axis=alt.Axis(labelAngle=0, title="Device Used")),
+                    x="Device Used:N",
                     y="FraudRate:Q",
                     color="Device Used:N",
                     tooltip=["Device Used", "FraudRate"]
@@ -417,18 +351,18 @@ if page == "dashboard":
                 alt.Chart(fraud_only)
                 .mark_bar()
                 .encode(
-                    x=alt.X("Customer Age:N", axis=alt.Axis(labelAngle=0, title="Customer Age")),
+                    x="Customer Age:N",
                     y="count()",
                     color=alt.value("#4C78A8"),
                 )
                 .properties(height=350)
             )
-            st.altair_chart(chart5, use_container_width=True)  
+            st.altair_chart(chart5)    
 
         # -----------------------------------------------
         # Outlier scatterplot 
         # -----------------------------------------------
-        st.subheader("Amount vs Account Age (sample)")
+        st.subheader("Amount vs Account Age")
         # sample safely, drop rows with missing numeric values, make sure column names match exactly
         sample_n = min(len(df), 2000)
         df_sample = (
@@ -437,21 +371,8 @@ if page == "dashboard":
             .sample(n=sample_n, random_state=42)                           # sample reproducibly
             .reset_index(drop=True)
         )
-        # ensure we have a readable fraud label in the sample for coloring
-        if fraud_col:
-            df_sample["fraud_label"] = df_sample[fraud_col].map({1: "Fraud", 0: "Legit", True: "Fraud", False: "Legit"}).fillna(df_sample[fraud_col].astype(str))
-            color_field = "fraud_label"
-            color_map = {"Fraud": "red", "Legit": "green"}
-        else:
-            # fallback: use Is Fraudulent column as string if present, else no color mapping
-            if "Is Fraudulent" in df_sample.columns:
-                df_sample["fraud_label"] = df_sample["Is Fraudulent"].astype(str)
-                color_field = "fraud_label"
-                color_map = None
-            else:
-                color_field = None
-                color_map = None
-
+        # ensure fraud column is string/categorical so colors render properly
+        df_sample["Is Fraudulent"] = df_sample["Is Fraudulent"].astype(str)
         # now pass the sampled DF and the column name (not a full-length series)
         import plotly.express as px
         fig = px.scatter(
@@ -459,7 +380,6 @@ if page == "dashboard":
             x="Account Age Days",
             y="Transaction Amount",
             color="Is Fraudulent",               
-            hover_data=["Customer ID", "Transaction ID"],
             title="Amount vs Account Age (sample)"
         )
         st.plotly_chart(fig)
@@ -467,7 +387,7 @@ if page == "dashboard":
         # -----------------------------------------------
         # Embed pre-generated Fraud IP Heatmap HTML
         # -----------------------------------------------
-        st.subheader("Fraud IP Heatmap")
+        st.subheader("Fraud IP Cholopleth Map")
         existing_map_path = Path(__file__).resolve().parent / "ip_heatmap.html"
         if existing_map_path.exists():
             html = existing_map_path.read_text()
