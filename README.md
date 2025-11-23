@@ -1,12 +1,12 @@
 # BT4012-Project
 
-# 🛡️ FraudGuard AI Dashboard
+# FraudGuard Dashboard
 
 A comprehensive fraud detection system with interactive data visualizations and real-time fraud prediction capabilities. Built with Streamlit (frontend) and FastAPI (backend), containerized with Docker.
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Features](#features)
@@ -23,7 +23,7 @@ A comprehensive fraud detection system with interactive data visualizations and 
 
 ---
 
-## 🎯 Overview
+## Overview
 
 FraudGuard AI is a machine learning-powered fraud detection dashboard that helps identify fraudulent e-commerce transactions. The system consists of:
 
@@ -33,11 +33,12 @@ FraudGuard AI is a machine learning-powered fraud detection dashboard that helps
 
 ---
 
-## ✨ Features
+## Features
 
 ### Frontend (Streamlit Dashboard)
 
 #### 📊 Dashboard Tab
+
 - **Key Metrics**: Total transactions, fraud count, fraud rate, average transaction amount
 - **Transaction Amount Distribution**: Interactive histogram with log scale and sampling controls
 - **Fraud vs Legit Classification**: Visual comparison with color-coded bars (red = fraud, green = legit)
@@ -49,10 +50,11 @@ FraudGuard AI is a machine learning-powered fraud detection dashboard that helps
 - **IP-coded choropleth graph**: cloropleth graph showing frequency of fraud cases
 
 #### 🔍 Fraud Checker Tab
+
 - **User Fraud Check**: Analyze fraud risk based on user profile (age, account age, order history)
 - **Transaction Fraud Check**: Analyze individual transactions (amount, payment method, device, IP, browser)
 - **Advanced Options**: Historical aggregate proxies for improved prediction accuracy
-- **Real-time Predictions**: Get fraud probability percentage 
+- **Real-time Predictions**: Get fraud probability percentage
 
 ### Backend (FastAPI)
 
@@ -119,7 +121,8 @@ FraudGuard AI is a machine learning-powered fraud detection dashboard that helps
 ## 🚀 Installation
 
 ### Step 1: Ensure all files are present
-Pull all files from github 
+
+Pull all files from github
 
 ### Step 2: Prepare Data
 
@@ -202,6 +205,7 @@ docker compose logs -f backend
 ### Dashboard Page
 
 #### 1. Key Performance Indicators (KPIs)
+
 - Total transactions count
 - Total fraud cases
 - Fraud rate percentage
@@ -210,49 +214,59 @@ docker compose logs -f backend
 #### 2. Interactive Visualizations
 
 **Transaction Amount Distribution**
+
 - Adjustable histogram with bin control (10–200 bins)
 - Log scale toggle for better visualization of skewed data
 - Sample size slider to improve performance (0–5000 rows)
 - Max amount filter to focus on specific ranges
 
 **Fraud Classification**
+
 - Color-coded bar chart (red = fraud, green = legit)
 - Shows class imbalance clearly
 
 **Fraud Rate by Payment Method**
+
 - Compare fraud rates across Credit Card, Debit Card, PayPal, Bank Transfer
 - Identify high-risk payment methods
 
 **Daily Transaction Trends**
+
 - Time series plot with 7-day moving average
 - Identify seasonal patterns and anomalies
 
 **Fraud Heatmap**
+
 - Hour-of-day (0–23) vs Day-of-week (Mon–Sun)
 - Identify peak fraud times
 
 **Product Category Analysis**
+
 - Top 20 categories with highest fraud counts
 - Horizontal bar chart sorted by frequency
 
 **Customer Age Distribution**
+
 - Age distribution among fraud cases
 - Identify high-risk age groups
 
 **Outlier Detection Scatter Plot**
+
 - Transaction Amount vs Account Age
 - Color-coded by fraud status
 - Sample-based for performance (2000 rows)
 
 **IP-coded choropleth graph**
+
 - cloropleth graph showing frequency of fraud cases
 - uses ip-address column in data
 
-  
 ### Fraud Checker Page
 
 #### User Fraud Check
+
 Input fields:
+
 - Age (18–100)
 - Account Age (days)
 - Past Fraud Cases
@@ -261,7 +275,9 @@ Input fields:
 - **Advanced options**: Customer transaction history, IP count
 
 #### Transaction Fraud Check
+
 Input fields:
+
 - Transaction Amount
 - Payment Method
 - Device Type
@@ -282,9 +298,11 @@ Input fields:
 ### API Endpoints
 
 #### `GET /model_status`
+
 Check if the ML model is loaded and ready.
 
 **Response:**
+
 ```json
 {
   "loaded": true,
@@ -298,9 +316,11 @@ Check if the ML model is loaded and ready.
 ```
 
 #### `GET /train_status`
+
 Get current training progress.
 
 **Response:**
+
 ```json
 {
   "in_progress": true,
@@ -310,9 +330,11 @@ Get current training progress.
 ```
 
 #### `POST /train`
+
 Trigger model training manually.
 
 **Response:**
+
 ```json
 {
   "status": "started",
@@ -321,9 +343,11 @@ Trigger model training manually.
 ```
 
 #### `POST /predict_fraud`
+
 Get fraud probability for a transaction or user.
 
 **Request (User check):**
+
 ```json
 {
   "features": {
@@ -336,6 +360,7 @@ Get fraud probability for a transaction or user.
 ```
 
 **Request (Transaction check):**
+
 ```json
 {
   "transaction": {
@@ -350,6 +375,7 @@ Get fraud probability for a transaction or user.
 ```
 
 **Response:**
+
 ```json
 {
   "fraud_probability": 23.5,
@@ -361,16 +387,19 @@ Get fraud probability for a transaction or user.
 ### Model Training
 
 The backend uses an ensemble ML model that combines:
+
 - Gradient Boosting
 - Random Forest
 - Logistic Regression
 
 **Training is triggered:**
+
 1. Automatically on first startup (if no model exists)
 2. Manually via `/train` endpoint
 3. Manually by running `train_model.py` inside the container
 
 **Model persistence:**
+
 - Trained models saved to `/app/models/fraud_model.pkl`
 - Persisted via Docker volume mount to `./backend/models/`
 - Subsequent startups load existing model (no retraining needed)
@@ -384,16 +413,18 @@ The backend uses an ensemble ML model that combines:
 Set these in `docker-compose.yml`:
 
 **Frontend:**
+
 ```yaml
 environment:
-  - API_URL=http://backend:8000          # Backend API endpoint
-  - MODEL_WAIT_TIMEOUT=120               # Max wait time for model (seconds)
+  - API_URL=http://backend:8000 # Backend API endpoint
+  - MODEL_WAIT_TIMEOUT=120 # Max wait time for model (seconds)
 ```
 
 **Backend:**
+
 ```yaml
 environment:
-  - PYTHONUNBUFFERED=1                   # Python logging
+  - PYTHONUNBUFFERED=1 # Python logging
   - RAW_DATA_PATH=/app/data/Fraudulent_E-Commerce_Transaction_Data_2.csv
   - MODEL_PATH=/app/models/fraud_model.pkl
 ```
@@ -406,11 +437,11 @@ Change ports in `docker-compose.yml` if 8501 or 8000 are already in use:
 services:
   frontend:
     ports:
-      - "8502:8501"  # Host:Container (change 8502 to your preferred port)
-  
+      - "8502:8501" # Host:Container (change 8502 to your preferred port)
+
   backend:
     ports:
-      - "8001:8000"  # Host:Container
+      - "8001:8000" # Host:Container
 ```
 
 Then update `API_URL` in frontend environment to match.
@@ -423,24 +454,25 @@ Persist data and models across container restarts:
 services:
   backend:
     volumes:
-      - ./data:/app/data              # Training data
-      - ./backend/models:/app/models  # Trained models (persisted)
-  
+      - ./data:/app/data # Training data
+      - ./backend/models:/app/models # Trained models (persisted)
+
   frontend:
     volumes:
-      - ./data:/app/data              # Read-only access to data
+      - ./data:/app/data # Read-only access to data
 ```
 
 ---
 
 ## 🐛 Troubleshooting
 
-### "Model not loaded" Error or Model loaded but nothing appearing 
+### "Model not loaded" Error or Model loaded but nothing appearing
 
 **Symptom**: Fraud Checker shows "Model still not loaded after waiting" or the model is loaded but nothing appears below
 
-**Solutions:** 
-1. **Wait for training to complete** (first startup takes 30s–5min): go to console and check that a fraud model pkl file was saved. If not, wait. 
+**Solutions:**
+
+1. **Wait for training to complete** (first startup takes 30s–5min): go to console and check that a fraud model pkl file was saved. If not, wait.
 2. **Click "Retry model status"** after training completes: Once the pkl is saved, go back to the dashboard and click retry model
 3. **Manually trigger training**:
    ```bash
@@ -460,6 +492,7 @@ services:
 **Symptom**: Dashboard shows "❌ Data file not found"
 
 **Solutions:**
+
 1. Ensure CSV file exists in `data/` folder
 2. Check filename matches exactly: `Fraudulent_E-Commerce_Transaction_Data_2.csv`
 3. Verify volume mount in `docker-compose.yml`
@@ -470,6 +503,7 @@ services:
 **Symptom**: `Error: bind: address already in use`
 
 **Solutions:**
+
 1. **Stop existing containers**:
    ```bash
    docker compose down
@@ -485,21 +519,26 @@ services:
 **Symptom**: Frontend shows connection errors
 
 **Solutions:**
+
 1. **Verify backend is running**:
+
    ```bash
    docker ps
    ```
+
    Should show both `frontend-1` and `backend-1`
 
 2. **Check backend logs**:
+
    ```bash
    docker compose logs backend
    ```
 
 3. **Verify API_URL** in docker-compose.yml:
+
    ```yaml
    environment:
-     - API_URL=http://backend:8000  # Must match backend service name
+     - API_URL=http://backend:8000 # Must match backend service name
    ```
 
 4. **Test backend directly**:
@@ -510,6 +549,7 @@ services:
 ### Slow Performance
 
 **Solutions:**
+
 1. **Reduce sample size** in visualizations (use sliders)
 2. **Allocate more RAM to Docker**:
    - Docker Desktop → Settings → Resources → Memory (increase to 4GB+)
@@ -541,12 +581,14 @@ docker compose up
 ### Making Code Changes
 
 **Frontend changes** (app.py):
+
 1. Edit `frontend/app.py`
 2. Save the file
 3. Streamlit will auto-reload (if using volume mount)
 4. Refresh browser
 
 **Backend changes** (main.py):
+
 1. Edit `backend/main.py`
 2. Restart backend:
    ```bash
@@ -554,6 +596,7 @@ docker compose up
    ```
 
 **Dependency changes** (requirements.txt):
+
 1. Edit requirements.txt
 2. Rebuild:
    ```bash
@@ -564,6 +607,7 @@ docker compose up
 ### Running Locally (Without Docker)
 
 **Frontend:**
+
 ```bash
 cd frontend
 pip install -r requirements.txt
@@ -571,6 +615,7 @@ streamlit run app.py
 ```
 
 **Backend:**
+
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -578,6 +623,3 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ---
-
-
-
