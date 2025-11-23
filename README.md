@@ -420,6 +420,86 @@ environment:
   - MODEL_WAIT_TIMEOUT=120 # Max wait time for model (seconds)
 ```
 
+---
+
+## Large files and Git LFS
+
+This repository uses Git LFS for large binary files (e.g. large CSVs). Patterns tracked by LFS are recorded in `.gitattributes` (for example: `backend/models/*.pkl`, `data/*.csv`).
+
+Please follow these guidelines when working with LFS-tracked files:
+
+- Install Git LFS (one-time per machine):
+
+  - macOS (Homebrew): `brew install git-lfs`
+  - Debian/Ubuntu: `sudo apt install git-lfs` (or use your package manager)
+  - Windows: use the Git for Windows installer or `choco install git-lfs`
+
+- Run this once after installing Git LFS:
+
+```bash
+git lfs install
+```
+
+- Cloning and pulling LFS objects:
+
+```bash
+git clone <repo-url>
+cd <repo>
+# LFS objects are usually fetched automatically; if not:
+git lfs pull
+```
+
+- If you already cloned but see pointer files (text placeholders), run:
+
+```bash
+git lfs install
+git lfs pull
+```
+
+- Adding new large files:
+
+  1. Track the pattern (example):
+     ```bash
+     git lfs track "backend/models/*.pkl"
+     git add .gitattributes
+     ```
+  2. Add & commit the file(s) as usual:
+     ```bash
+     git add path/to/large.file
+     git commit -m "Add large artifact tracked by Git LFS"
+     git push origin main
+     ```
+
+- If a large file was previously committed without LFS and you want to migrate it to LFS (history rewrite), use:
+
+```bash
+# WARNING: rewrites history and requires force-push; coordinate with collaborators
+git lfs migrate import --include="data/*.csv,backend/models/*.pkl" --include-ref=refs/heads/main
+git push --force origin main
+```
+
+Notes and caveats
+
+- Remote storage and quotas: Hosted Git providers (GitHub/GitLab/Bitbucket) limit LFS storage and bandwidth on free accounts. Check your organization’s plan if you add many or very large artifacts.
+- CI and deployment: Ensure your CI runner or deploy server has Git LFS installed, or include `git lfs pull` in the deploy steps before using LFS files.
+- Docker builds: If your Docker build context depends on LFS-tracked files, run `git lfs pull` on the build machine first so the real files (not pointers) are included.
+- Alternatives for very large or frequently changing artifacts: Use object storage (S3/GCS), an ML model registry (MLflow, W&B), or store artifacts as release assets.
+
+Quick commands
+
+```bash
+# Show tracked patterns
+git lfs track
+
+# List LFS files in working tree
+git lfs ls-files
+
+# Pull LFS objects
+git lfs pull
+```
+
+---
+
 **Backend:**
 
 ```yaml

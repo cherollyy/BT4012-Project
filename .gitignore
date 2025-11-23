@@ -7,4 +7,4 @@ __pycache__/
 *.pyc
 venv/
 .streamlit/secrets.toml
-!/data/Fraudulent_E-Commerce_Transaction_Data_MERGED.csv
+!/data/Fraudulent_E_Commerce_Transaction_Data_MERGED.csv
